@@ -1,0 +1,4 @@
+node_modules/*
+.vite
+docs/workflows
+src/renderer/dist

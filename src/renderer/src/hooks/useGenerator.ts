@@ -1,0 +1,62 @@
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { useSessionStore } from '../stores/sessionStore'
+import type { GenerationResult } from '@shared/types'
+
+export function useGenerator() {
+  const { params, setGenerating, setProgress, addToHistory, generateTrigger } = useSessionStore()
+  const [error, setError] = useState<string | null>(null)
+  const lastTriggerRef = useRef(generateTrigger)
+  const generatingRef = useRef(false)
+
+  const generate = useCallback(async () => {
+    if (generatingRef.current) return
+    generatingRef.current = true
+    setGenerating(true)
+    setProgress(null)
+    setError(null)
+
+    const {
+      setPrompt: _sp, setNegativePrompt: _snp, setSeed: _ss, setSteps: _sst,
+      setCfg: _sc, setWidth: _sw, setHeight: _sh, setLora: _sl, setModel: _sm,
+      randomizeSeed: _rs,
+      ...dataParams
+    } = params
+
+    const unsubProgress = window.electronAPI.comfyui.onProgress((data) => {
+      setProgress(data)
+    })
+
+    try {
+      const result = await window.electronAPI.comfyui.generate(dataParams)
+      const image = result.images?.[0]
+      if (image) {
+        const entry: GenerationResult = {
+          id: result.promptId,
+          imageBase64: `data:image/png;base64,${image.data}`,
+          filename: image.filename,
+          params: dataParams,
+          timestamp: Date.now()
+        }
+        addToHistory(entry)
+        useSessionStore.getState().selectImage(entry.id)
+      }
+      useSessionStore.getState().params.randomizeSeed()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao gerar imagem')
+    } finally {
+      unsubProgress()
+      generatingRef.current = false
+      setProgress(null)
+      setGenerating(false)
+    }
+  }, [params, setGenerating, setProgress, addToHistory])
+
+  useEffect(() => {
+    if (generateTrigger !== lastTriggerRef.current) {
+      lastTriggerRef.current = generateTrigger
+      generate()
+    }
+  }, [generateTrigger, generate])
+
+  return { generate, error }
+}
