@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
-import { Sparkles, Shuffle, RefreshCw, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, Shuffle, RefreshCw, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { SafeImage } from './SafeImage'
 
 export function PromptPanel() {
@@ -11,7 +11,11 @@ export function PromptPanel() {
   const [lorasOpen, setLorasOpen] = useState(false)
   const [refreshingLoras, setRefreshingLoras] = useState(false)
   const [lorasRefreshed, setLorasRefreshed] = useState(false)
+  const [loraSearch, setLoraSearch] = useState('')
   const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
+  const filteredLoras = loras.filter((lora) =>
+    lora.name.toLowerCase().includes(loraSearch.toLowerCase())
+  )
 
   const handleRefreshLoras = useCallback(async () => {
     if (refreshingLoras) return
@@ -208,8 +212,26 @@ export function PromptPanel() {
 
           {lorasOpen && (
             <div>
-              {loras.length === 0 ? (
-                <p className="text-xs text-text-muted">Nenhum LoRA encontrado em D:\ComfyUI_windows_portable\ComfyUI\models\loras</p>
+              <div className="relative mb-2">
+                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
+                <input
+                  type="text"
+                  value={loraSearch}
+                  onChange={(e) => setLoraSearch(e.target.value)}
+                  placeholder="Buscar LoRA..."
+                  className="w-full bg-surface rounded-lg border border-border pl-6 pr-7 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
+                />
+                {loraSearch && (
+                  <button
+                    onClick={() => setLoraSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {filteredLoras.length === 0 ? (
+                <p className="text-xs text-text-muted">Nenhum LoRA encontrado</p>
               ) : (
                 <div className="max-h-60 overflow-y-auto custom-scroll">
                   <div className="grid grid-cols-3 gap-2">
@@ -226,7 +248,7 @@ export function PromptPanel() {
                     >
                       None
                     </button>
-                    {loras.map((lora) => {
+                    {filteredLoras.map((lora) => {
                       const displayName = lora.name.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? lora.name
                       return (
                         <button
