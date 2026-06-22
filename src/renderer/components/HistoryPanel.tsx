@@ -9,7 +9,8 @@ function HistoryItem({
   deleteMode,
   deleteSelected,
   onToggleSelect,
-  onSelect
+  onSelect,
+  onDelete
 }: {
   item: GenerationResult
   selected: boolean
@@ -17,6 +18,7 @@ function HistoryItem({
   deleteSelected: boolean
   onToggleSelect: () => void
   onSelect: () => void
+  onDelete: () => void
 }) {
   const [imgSrc, setImgSrc] = useState<string | null>(item.imageBase64)
   const [loaded, setLoaded] = useState(false)
@@ -83,7 +85,7 @@ function HistoryItem({
       {!deleteMode && (
         <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <div
-            onClick={(e) => { e.stopPropagation(); onToggleSelect() }}
+            onClick={(e) => { e.stopPropagation(); onDelete() }}
             className="p-1 rounded bg-black/60 hover:bg-error/80 text-white/80 hover:text-white transition-colors"
             title="Excluir"
           >
@@ -112,6 +114,12 @@ export function HistoryPanel() {
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleteIds, setDeleteIds] = useState<Set<string>>(new Set())
 
+  const handleDelete = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return
+    await window.electronAPI.file.deleteHistoryItems(ids)
+    deleteHistory(ids)
+  }, [deleteHistory])
+
   const toggleDelete = useCallback((id: string) => {
     setDeleteIds((prev) => {
       const next = new Set(prev)
@@ -123,12 +131,14 @@ export function HistoryPanel() {
 
   const handleDeleteSelected = useCallback(async () => {
     if (deleteIds.size === 0) return
-    const ids = Array.from(deleteIds)
-    await window.electronAPI.file.deleteHistoryItems(ids)
-    deleteHistory(ids)
+    await handleDelete(Array.from(deleteIds))
     setDeleteIds(new Set())
     setDeleteMode(false)
-  }, [deleteIds, deleteHistory])
+  }, [deleteIds, handleDelete])
+
+  const handleIndividualDelete = useCallback(async (id: string) => {
+    await handleDelete([id])
+  }, [handleDelete])
 
   const cancelDelete = useCallback(() => {
     setDeleteIds(new Set())
@@ -199,6 +209,7 @@ export function HistoryPanel() {
             deleteSelected={deleteIds.has(item.id)}
             onToggleSelect={() => toggleDelete(item.id)}
             onSelect={() => selectImage(item.id === selectedId ? null : item.id)}
+            onDelete={() => handleIndividualDelete(item.id)}
           />
         ))}
       </div>

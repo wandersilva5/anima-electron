@@ -549,23 +549,33 @@ function setupIPC() {
     if (images.length === 0) {
       throw new Error("ComfyUI não retornou imagens");
     }
-    const historyDir = join(app.getPath("userData"), "history", response.prompt_id);
-    if (!existsSync(historyDir)) {
-      mkdirSync(historyDir, { recursive: true });
+    const historyBaseDir = join(app.getPath("userData"), "history");
+    const historyDir = join(historyBaseDir, response.prompt_id);
+    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
+    try {
+      if (!existsSync(historyBaseDir)) {
+        mkdirSync(historyBaseDir, { recursive: true });
+        console.log(`[Anima] Pasta de histórico criada: ${historyBaseDir}`);
+      }
+      if (!existsSync(historyDir)) {
+        mkdirSync(historyDir, { recursive: true });
+      }
+      savedImages = [];
+      for (const img of images) {
+        const imgPath = join(historyDir, img.filename);
+        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
+        savedImages.push({ ...img, filePath: imgPath });
+        const metadata = {
+          params,
+          filename: img.filename,
+          timestamp: Date.now()
+        };
+        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
+      }
+      console.log(`[Anima] Imagens salvas em: ${historyDir}`);
+    } catch (err) {
+      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
     }
-    const savedImages = [];
-    for (const img of images) {
-      const imgPath = join(historyDir, img.filename);
-      writeFileSync(imgPath, Buffer.from(img.data, "base64"));
-      savedImages.push({ ...img, filePath: imgPath });
-      const metadata = {
-        params,
-        filename: img.filename,
-        timestamp: Date.now()
-      };
-      writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-    }
-    console.log(`[Anima] Imagens salvas em: ${historyDir}`);
     return { promptId: response.prompt_id, images: savedImages };
   });
   ipcMain.handle("loras:list", async () => {
