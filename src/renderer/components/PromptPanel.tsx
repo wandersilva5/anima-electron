@@ -72,7 +72,7 @@ export function PromptPanel() {
                 <div className="max-h-48 overflow-y-auto custom-scroll">
                   <div className="grid grid-cols-3 gap-2">
                     {models.map((model) => {
-                      const displayName = model.name.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? model.name
+                      const displayName = model.name.replace(/\.(safetensors|ckpt)$/, '').split(/[/\\]/).pop() ?? model.name
                       const isSelected = params.modelName === model.name
                       return (
                         <button
@@ -95,7 +95,7 @@ export function PromptPanel() {
                             />
                           ) : (
                             <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
-                              <span className="text-[7px] text-text-muted text-center px-1 leading-tight">
+                              <span className="text-[10px] text-text-muted text-center px-1 leading-tight">
                                 {displayName.slice(0, 18)}
                               </span>
                             </div>
