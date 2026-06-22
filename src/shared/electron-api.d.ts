@@ -2,11 +2,19 @@ import type { AppSettings, ComfyUIStatus, LoraInfo, ModelInfo } from '@shared/ty
 
 interface GenerateResult {
   promptId: string
-  images: { filename: string; data: string }[]
+  images: { filename: string; data: string; filePath: string }[]
 }
 
 interface ComfyUIStatusWithLaunch extends ComfyUIStatus {
   launching: boolean
+}
+
+interface SavedHistoryItem {
+  id: string
+  filePath: string
+  filename: string
+  params: import('./types').GenerationParams
+  timestamp: number
 }
 
 interface ElectronAPI {
@@ -30,8 +38,9 @@ interface ElectronAPI {
     set: (settings: AppSettings) => Promise<AppSettings>
     selectDir: () => Promise<string | null>
   }
-  app: {
-    getWorkflowDefaults: () => Promise<Record<string, unknown>>,
+  file: {
+    loadHistory: () => Promise<SavedHistoryItem[]>
+    deleteHistoryItems: (ids: string[]) => Promise<void>
     readImage: (filePath: string) => Promise<string | null>
   }
 }

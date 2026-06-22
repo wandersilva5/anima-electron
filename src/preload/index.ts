@@ -34,7 +34,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     selectDir: () => ipcRenderer.invoke('settings:selectDir')
   },
   app: {
-    getWorkflowDefaults: () => ipcRenderer.invoke('app:getWorkflowDefaults'),
+    getWorkflowDefaults: () => ipcRenderer.invoke('app:getWorkflowDefaults')
+  },
+  file: {
+    loadHistory: () => ipcRenderer.invoke('file:loadHistory'),
+    deleteHistoryItems: (ids: string[]) => ipcRenderer.invoke('file:deleteHistoryItems', ids),
     readImage: (filePath: string) => ipcRenderer.invoke('file:readImage', filePath)
   }
 })

@@ -14,7 +14,8 @@ export interface GenerationParams {
 
 export interface GenerationResult {
   id: string
-  imageBase64: string
+  imageBase64: string | null
+  filePath: string | null
   filename: string
   params: GenerationParams
   timestamp: number

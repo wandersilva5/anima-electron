@@ -1,8 +1,139 @@
+import { useState, useEffect, useCallback } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Image, Clock } from 'lucide-react'
+import type { GenerationResult } from '@shared/types'
+import { Image, Clock, Trash2, X, CheckSquare, Square } from 'lucide-react'
+
+function HistoryItem({
+  item,
+  selected,
+  deleteMode,
+  deleteSelected,
+  onToggleSelect,
+  onSelect
+}: {
+  item: GenerationResult
+  selected: boolean
+  deleteMode: boolean
+  deleteSelected: boolean
+  onToggleSelect: () => void
+  onSelect: () => void
+}) {
+  const [imgSrc, setImgSrc] = useState<string | null>(item.imageBase64)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    if (item.imageBase64) {
+      setImgSrc(item.imageBase64)
+      setLoaded(true)
+    } else if (item.filePath && !loaded) {
+      window.electronAPI.file.readImage(item.filePath).then((data) => {
+        if (data) {
+          setImgSrc(data)
+          setLoaded(true)
+        }
+      })
+    }
+  }, [item.imageBase64, item.filePath, loaded])
+
+  const handleClick = useCallback(() => {
+    if (deleteMode) {
+      onToggleSelect()
+    } else {
+      onSelect()
+    }
+  }, [deleteMode, onToggleSelect, onSelect])
+
+  return (
+    <button
+      onClick={handleClick}
+      className={`
+        relative aspect-[9/16] rounded-lg overflow-hidden
+        border-2 transition-all duration-200 group
+        ${selected && !deleteMode
+          ? 'border-accent ring-1 ring-accent'
+          : selected && deleteMode
+            ? 'border-error ring-1 ring-error'
+            : deleteMode
+              ? 'border-border hover:border-text-muted'
+              : 'border-transparent hover:border-border'
+        }
+      `}
+    >
+      {imgSrc ? (
+        <img
+          src={imgSrc}
+          alt=""
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+          <Image size={20} className="text-text-muted opacity-40" />
+        </div>
+      )}
+
+      {item.params.loraName && (
+        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
+          <span className="text-[10px] text-white/80 truncate block">
+            LoRA: {item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').slice(0, 20)}
+          </span>
+        </div>
+      )}
+
+      {!deleteMode && (
+        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div
+            onClick={(e) => { e.stopPropagation(); onToggleSelect() }}
+            className="p-1 rounded bg-black/60 hover:bg-error/80 text-white/80 hover:text-white transition-colors"
+            title="Excluir"
+          >
+            <Trash2 size={12} />
+          </div>
+        </div>
+      )}
+
+      {deleteMode && (
+        <div className="absolute top-1.5 left-1.5">
+          <div className={`p-0.5 rounded ${deleteSelected ? 'bg-error text-white' : 'bg-black/50 text-white/60'}`}>
+            {deleteSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+          </div>
+        </div>
+      )}
+
+      {selected && !deleteMode && (
+        <div className="absolute inset-0 ring-1 ring-accent/30 rounded-lg pointer-events-none" />
+      )}
+    </button>
+  )
+}
 
 export function HistoryPanel() {
-  const { history, selectedId, selectImage } = useSessionStore()
+  const { history, selectedId, selectImage, deleteHistory } = useSessionStore()
+  const [deleteMode, setDeleteMode] = useState(false)
+  const [deleteIds, setDeleteIds] = useState<Set<string>>(new Set())
+
+  const toggleDelete = useCallback((id: string) => {
+    setDeleteIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const handleDeleteSelected = useCallback(async () => {
+    if (deleteIds.size === 0) return
+    const ids = Array.from(deleteIds)
+    await window.electronAPI.file.deleteHistoryItems(ids)
+    deleteHistory(ids)
+    setDeleteIds(new Set())
+    setDeleteMode(false)
+  }, [deleteIds, deleteHistory])
+
+  const cancelDelete = useCallback(() => {
+    setDeleteIds(new Set())
+    setDeleteMode(false)
+  }, [])
 
   if (history.length === 0) {
     return (
@@ -27,41 +158,48 @@ export function HistoryPanel() {
           Histórico
         </span>
         <span className="text-xs text-text-muted ml-auto">{history.length}</span>
+        {!deleteMode ? (
+          <button
+            onClick={() => setDeleteMode(true)}
+            className="p-1 rounded hover:bg-surface-tertiary text-text-muted hover:text-error transition-colors"
+            title="Selecionar para excluir"
+          >
+            <Trash2 size={12} />
+          </button>
+        ) : (
+          <button
+            onClick={cancelDelete}
+            className="p-1 rounded hover:bg-surface-tertiary text-text-muted hover:text-text-primary transition-colors"
+            title="Cancelar"
+          >
+            <X size={12} />
+          </button>
+        )}
       </div>
+
+      {deleteMode && deleteIds.size > 0 && (
+        <div className="mb-2">
+          <button
+            onClick={handleDeleteSelected}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-error/20 text-error hover:bg-error/30 text-xs font-medium transition-colors"
+          >
+            <Trash2 size={12} />
+            Excluir {deleteIds.size} item(ns)
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         {history.map((item) => (
-          <button
+          <HistoryItem
             key={item.id}
-            onClick={() => selectImage(item.id === selectedId ? null : item.id)}
-            className={`
-              relative aspect-[9/16] rounded-lg overflow-hidden
-              border-2 transition-all duration-200 group
-              ${item.id === selectedId
-                ? 'border-accent ring-1 ring-accent'
-                : 'border-transparent hover:border-border'
-              }
-            `}
-          >
-            <img
-              src={item.imageBase64}
-              alt=""
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-
-            {item.params.loraName && (
-              <div className="absolute bottom-0 left-0 right-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
-                <span className="text-[10px] text-white/80 truncate block">
-                  LoRA: {item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').slice(0, 20)}
-                </span>
-              </div>
-            )}
-
-            {item.id === selectedId && (
-              <div className="absolute inset-0 ring-1 ring-accent/30 rounded-lg pointer-events-none" />
-            )}
-          </button>
+            item={item}
+            selected={deleteMode ? deleteIds.has(item.id) : item.id === selectedId}
+            deleteMode={deleteMode}
+            deleteSelected={deleteIds.has(item.id)}
+            onToggleSelect={() => toggleDelete(item.id)}
+            onSelect={() => selectImage(item.id === selectedId ? null : item.id)}
+          />
         ))}
       </div>
     </div>

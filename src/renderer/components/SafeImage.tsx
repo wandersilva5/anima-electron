@@ -6,7 +6,7 @@ export function SafeImage({ path, alt, className }: { path?: string; alt: string
   useEffect(() => {
     if (!path) { setSrc(null); return }
     let cancelled = false
-    window.electronAPI.app.readImage(path).then((data) => {
+    window.electronAPI.file.readImage(path).then((data) => {
       if (!cancelled) setSrc(data)
     })
     return () => { cancelled = true }

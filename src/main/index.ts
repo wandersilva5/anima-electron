@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
 import { WorkflowManager } from './workflow'
@@ -107,7 +107,28 @@ function setupIPC(): void {
     if (images.length === 0) {
       throw new Error('ComfyUI não retornou imagens')
     }
-    return { promptId: response.prompt_id, images }
+
+    const historyDir = join(app.getPath('userData'), 'history', response.prompt_id)
+    if (!existsSync(historyDir)) {
+      mkdirSync(historyDir, { recursive: true })
+    }
+
+    const savedImages = []
+    for (const img of images) {
+      const imgPath = join(historyDir, img.filename)
+      writeFileSync(imgPath, Buffer.from(img.data, 'base64'))
+      savedImages.push({ ...img, filePath: imgPath })
+
+      const metadata = {
+        params,
+        filename: img.filename,
+        timestamp: Date.now()
+      }
+      writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
+    }
+
+    console.log(`[Anima] Imagens salvas em: ${historyDir}`)
+    return { promptId: response.prompt_id, images: savedImages }
   })
 
   ipcMain.handle('loras:list', async () => {
@@ -174,6 +195,51 @@ function setupIPC(): void {
       return `data:image/${ext};base64,${buffer.toString('base64')}`
     } catch {
       return null
+    }
+  })
+
+  ipcMain.handle('file:loadHistory', async () => {
+    const historyBaseDir = join(app.getPath('userData'), 'history')
+    if (!existsSync(historyBaseDir)) return []
+
+    const dirs = readdirSync(historyBaseDir)
+    const items: { id: string; filePath: string; filename: string; params: unknown; timestamp: number }[] = []
+
+    for (const dir of dirs) {
+      const dirPath = join(historyBaseDir, dir)
+      try {
+        if (!statSync(dirPath).isDirectory()) continue
+        const metaPath = join(dirPath, 'metadata.json')
+        if (!existsSync(metaPath)) continue
+
+        const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+        const imgPath = join(dirPath, meta.filename)
+        if (!existsSync(imgPath)) continue
+
+        items.push({
+          id: dir,
+          filePath: imgPath,
+          filename: meta.filename,
+          params: meta.params,
+          timestamp: meta.timestamp
+        })
+      } catch (err) {
+        console.warn(`[Anima] Erro ao ler histórico ${dir}:`, err)
+      }
+    }
+
+    items.sort((a, b) => b.timestamp - a.timestamp)
+    return items
+  })
+
+  ipcMain.handle('file:deleteHistoryItems', async (_event, ids: string[]) => {
+    const historyBaseDir = join(app.getPath('userData'), 'history')
+    for (const id of ids) {
+      const dirPath = join(historyBaseDir, id)
+      if (existsSync(dirPath)) {
+        rmSync(dirPath, { recursive: true, force: true })
+        console.log(`[Anima] Histórico excluído: ${id}`)
+      }
     }
   })
 }

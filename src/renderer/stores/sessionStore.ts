@@ -28,6 +28,8 @@ interface SessionState {
   setProgress: (p: GenerationProgress | null) => void
   history: GenerationResult[]
   addToHistory: (r: GenerationResult) => void
+  setHistory: (h: GenerationResult[]) => void
+  deleteHistory: (ids: string[]) => void
   selectedId: string | null
   selectImage: (id: string | null) => void
   loras: LoraInfo[]
@@ -72,6 +74,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setProgress: (progress) => set({ progress }),
   history: [],
   addToHistory: (result) => set((s) => ({ history: [result, ...s.history] })),
+  setHistory: (history) => set({ history }),
+  deleteHistory: (ids) => set((s) => ({
+    history: s.history.filter((h) => !ids.includes(h.id)),
+    selectedId: ids.includes(s.selectedId ?? '') ? null : s.selectedId
+  })),
   selectedId: null,
   selectImage: (selectedId) => set({ selectedId }),
   loras: [],

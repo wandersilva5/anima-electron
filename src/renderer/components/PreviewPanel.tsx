@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { Download, Trash2, ImageOff, Eye, EyeOff } from 'lucide-react'
 
@@ -6,14 +6,24 @@ export function PreviewPanel() {
   const { history, selectedId, selectImage } = useSessionStore()
   const selected = history.find((h) => h.id === selectedId)
   const [blurred, setBlurred] = useState(true)
+  const [imgSrc, setImgSrc] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!selected) { setImgSrc(null); return }
+    if (selected.imageBase64) {
+      setImgSrc(selected.imageBase64)
+    } else if (selected.filePath) {
+      window.electronAPI.file.readImage(selected.filePath).then(setImgSrc)
+    }
+  }, [selected])
 
   const handleDownload = useCallback(() => {
-    if (!selected) return
+    if (!selected || !imgSrc) return
     const link = document.createElement('a')
-    link.href = selected.imageBase64
+    link.href = imgSrc
     link.download = selected.filename || `anima-${selected.id}.png`
     link.click()
-  }, [selected])
+  }, [selected, imgSrc])
 
   if (!selected) {
     return (
@@ -45,7 +55,7 @@ export function PreviewPanel() {
       <div className="relative max-w-full max-h-full flex flex-col items-center">
         <div className="relative rounded-2xl overflow-hidden shadow-2xl bg-surface-secondary group">
           <img
-            src={selected.imageBase64}
+            src={imgSrc ?? ''}
             alt="Generated"
             className={`max-w-[85vh] max-h-[70vh] object-contain transition-all duration-300 ${blurred ? 'blur-[40px] scale-105' : ''}`}
           />

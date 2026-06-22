@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSessionStore } from './stores/sessionStore'
+import type { GenerationResult } from '@shared/types'
 import { HistoryPanel } from './components/HistoryPanel'
 import { PreviewPanel } from './components/PreviewPanel'
 import { PromptPanel } from './components/PromptPanel'
@@ -56,6 +57,19 @@ export default function App() {
 
     const init = async () => {
       await loadResources()
+      const { setHistory } = useSessionStore.getState()
+      const savedItems = await window.electronAPI.file.loadHistory()
+      if (savedItems.length > 0) {
+        const history: GenerationResult[] = savedItems.map((item) => ({
+          id: item.id,
+          imageBase64: null,
+          filePath: item.filePath,
+          filename: item.filename,
+          params: item.params,
+          timestamp: item.timestamp
+        }))
+        setHistory(history)
+      }
       setInitialized(true)
     }
     init()

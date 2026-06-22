@@ -33,6 +33,7 @@ export function useGenerator() {
         const entry: GenerationResult = {
           id: result.promptId,
           imageBase64: `data:image/png;base64,${image.data}`,
+          filePath: image.filePath,
           filename: image.filename,
           params: dataParams,
           timestamp: Date.now()
