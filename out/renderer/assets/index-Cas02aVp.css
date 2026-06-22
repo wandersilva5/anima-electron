@@ -513,6 +513,10 @@ video {
   pointer-events: none;
 }
 
+.fixed{
+  position: fixed;
+}
+
 .absolute{
   position: absolute;
 }
@@ -540,6 +544,10 @@ video {
 
 .right-0{
   right: 0px;
+}
+
+.z-50{
+  z-index: 50;
 }
 
 .mx-auto{
@@ -631,6 +639,10 @@ video {
   height: 1rem;
 }
 
+.h-5{
+  height: 1.25rem;
+}
+
 .h-7{
   height: 1.75rem;
 }
@@ -679,8 +691,8 @@ video {
   width: 1rem;
 }
 
-.w-48{
-  width: 12rem;
+.w-5{
+  width: 1.25rem;
 }
 
 .w-7{
@@ -711,6 +723,10 @@ video {
   max-width: 100%;
 }
 
+.max-w-lg{
+  max-width: 32rem;
+}
+
 .max-w-md{
   max-width: 28rem;
 }
@@ -727,6 +743,18 @@ video {
   --tw-scale-x: 1.05;
   --tw-scale-y: 1.05;
   transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+
+@keyframes ping{
+
+  75%, 100%{
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.animate-\[ping_0\.3s_ease-out\]{
+  animation: ping 0.3s ease-out;
 }
 
 @keyframes spin{
@@ -762,6 +790,10 @@ video {
 
 .items-center{
   align-items: center;
+}
+
+.justify-end{
+  justify-content: flex-end;
 }
 
 .justify-center{
@@ -920,6 +952,10 @@ video {
   background-color: var(--color-accent-muted);
 }
 
+.bg-black\/50{
+  background-color: rgb(0 0 0 / 0.5);
+}
+
 .bg-surface{
   background-color: var(--color-surface);
 }
@@ -930,6 +966,10 @@ video {
 
 .bg-surface-tertiary{
   background-color: var(--color-surface-tertiary);
+}
+
+.bg-transparent{
+  background-color: transparent;
 }
 
 .bg-gradient-to-t{
@@ -954,6 +994,10 @@ video {
 .object-cover{
   -o-object-fit: cover;
      object-fit: cover;
+}
+
+.p-1{
+  padding: 0.25rem;
 }
 
 .p-1\.5{
@@ -1001,6 +1045,11 @@ video {
   padding-right: 1rem;
 }
 
+.px-6{
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
 .py-0\.5{
   padding-top: 0.125rem;
   padding-bottom: 0.125rem;
@@ -1029,6 +1078,11 @@ video {
 .py-2\.5{
   padding-top: 0.625rem;
   padding-bottom: 0.625rem;
+}
+
+.py-4{
+  padding-top: 1rem;
+  padding-bottom: 1rem;
 }
 
 .text-left{
@@ -1063,10 +1117,6 @@ video {
 .text-xs{
   font-size: 0.75rem;
   line-height: 1rem;
-}
-
-.font-bold{
-  font-weight: 700;
 }
 
 .font-medium{
@@ -1121,6 +1171,10 @@ video {
   color: var(--color-text-secondary);
 }
 
+.text-warning{
+  color: var(--color-warning);
+}
+
 .text-white{
   --tw-text-opacity: 1;
   color: rgb(255 255 255 / var(--tw-text-opacity, 1));
@@ -1150,6 +1204,11 @@ video {
   box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
+.outline-none{
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
 .ring-1{
   --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
   --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);
@@ -1163,6 +1222,11 @@ video {
 .blur-\[40px\]{
   --tw-blur: blur(40px);
   filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+
+.backdrop-blur-sm{
+  --tw-backdrop-blur: blur(4px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
 }
 
 .transition-all{
@@ -1202,6 +1266,7 @@ video {
   --color-accent-muted: #4a3a8a;
   --color-success: #4ade80;
   --color-error: #f87171;
+  --color-warning: #fbbf24;
   --scrollbar-thumb: #2a2a3a;
   --scrollbar-thumb-hover: #3a3a4a;
   --range-bg: #2a2a3a;
@@ -1220,6 +1285,7 @@ video {
   --color-accent-muted: #c4b8f0;
   --color-success: #22c55e;
   --color-error: #ef4444;
+  --color-warning: #f59e0b;
   --scrollbar-thumb: #c4c4d0;
   --scrollbar-thumb-hover: #a4a4b0;
   --range-bg: #d4d4e0;
@@ -1344,6 +1410,10 @@ input[type="number"] {
   --tw-scale-x: 0.98;
   --tw-scale-y: 0.98;
   transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+
+.disabled\:opacity-50:disabled{
+  opacity: 0.5;
 }
 
 @media (min-width: 1024px){

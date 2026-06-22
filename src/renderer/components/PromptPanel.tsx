@@ -1,14 +1,30 @@
-import { useState } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
-import { Sparkles, Shuffle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, Shuffle, RefreshCw, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { SafeImage } from './SafeImage'
 
 export function PromptPanel() {
   const { params, generating, progress, status, loras, models, refreshLoras } = useSessionStore()
   const { generate, error } = useGenerator()
   const [modelsOpen, setModelsOpen] = useState(false)
-  const [lorasOpen, setLorasOpen] = useState(true)
+  const [lorasOpen, setLorasOpen] = useState(false)
+  const [refreshingLoras, setRefreshingLoras] = useState(false)
+  const [lorasRefreshed, setLorasRefreshed] = useState(false)
+  const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  const handleRefreshLoras = useCallback(async () => {
+    if (refreshingLoras) return
+    setRefreshingLoras(true)
+    try {
+      await refreshLoras()
+      setLorasRefreshed(true)
+      clearTimeout(loraRefreshTimer.current)
+      loraRefreshTimer.current = setTimeout(() => setLorasRefreshed(false), 1500)
+    } finally {
+      setRefreshingLoras(false)
+    }
+  }, [refreshLoras, refreshingLoras])
 
   return (
     <div className="flex flex-col h-full">
@@ -169,11 +185,24 @@ export function PromptPanel() {
               {params.loraName && <span className="ml-1 text-accent font-normal normal-case">(ativo)</span>}
             </button>
             <button
-              onClick={refreshLoras}
-              className="p-1 rounded-lg hover:bg-surface-tertiary text-text-muted hover:text-text-primary transition-colors shrink-0"
+              onClick={handleRefreshLoras}
+              disabled={refreshingLoras}
+              className={`
+                p-1 rounded-lg shrink-0 transition-all duration-300
+                ${lorasRefreshed
+                  ? 'bg-success/20 text-success'
+                  : refreshingLoras
+                    ? 'bg-accent/10 text-accent'
+                    : 'hover:bg-surface-tertiary text-text-muted hover:text-text-primary'
+                }
+              `}
               title="Atualizar lista de LoRAs"
             >
-              <RefreshCw size={12} />
+              {lorasRefreshed ? (
+                <Check size={12} className="animate-[ping_0.3s_ease-out]" />
+              ) : (
+                <RefreshCw size={12} className={refreshingLoras ? 'animate-spin' : ''} />
+              )}
             </button>
           </div>
 

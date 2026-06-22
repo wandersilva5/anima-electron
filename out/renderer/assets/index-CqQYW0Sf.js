@@ -136,7 +136,7 @@ function T$1(a) {
   throw a._result;
 }
 var U$1 = { current: null }, V$1 = { transition: null }, W$1 = { ReactCurrentDispatcher: U$1, ReactCurrentBatchConfig: V$1, ReactCurrentOwner: K$1 };
-function X$1() {
+function X$2() {
   throw Error("act(...) is not supported in production builds of React.");
 }
 react_production_min.Children = { map: S$1, forEach: function(a, b, e) {
@@ -164,7 +164,7 @@ react_production_min.PureComponent = G$1;
 react_production_min.StrictMode = q$1;
 react_production_min.Suspense = w;
 react_production_min.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = W$1;
-react_production_min.act = X$1;
+react_production_min.act = X$2;
 react_production_min.cloneElement = function(a, b, e) {
   if (null === a || void 0 === a) throw Error("React.cloneElement(...): The argument must be a React element, but you passed " + a + ".");
   var d = C$1({}, a.props), c = a.key, k2 = a.ref, h = a._owner;
@@ -216,7 +216,7 @@ react_production_min.startTransition = function(a) {
     V$1.transition = b;
   }
 };
-react_production_min.unstable_act = X$1;
+react_production_min.unstable_act = X$2;
 react_production_min.useCallback = function(a, b) {
   return U$1.current.useCallback(a, b);
 };
@@ -5014,7 +5014,7 @@ function Wj(a, b, c) {
   if (5 === d || 6 === d) a = a.stateNode, b ? c.insertBefore(a, b) : c.appendChild(a);
   else if (4 !== d && (a = a.child, null !== a)) for (Wj(a, b, c), a = a.sibling; null !== a; ) Wj(a, b, c), a = a.sibling;
 }
-var X = null, Xj = false;
+var X$1 = null, Xj = false;
 function Yj(a, b, c) {
   for (c = c.child; null !== c; ) Zj(a, b, c), c = c.sibling;
 }
@@ -5027,23 +5027,23 @@ function Zj(a, b, c) {
     case 5:
       U || Lj(c, b);
     case 6:
-      var d = X, e = Xj;
-      X = null;
+      var d = X$1, e = Xj;
+      X$1 = null;
       Yj(a, b, c);
-      X = d;
+      X$1 = d;
       Xj = e;
-      null !== X && (Xj ? (a = X, c = c.stateNode, 8 === a.nodeType ? a.parentNode.removeChild(c) : a.removeChild(c)) : X.removeChild(c.stateNode));
+      null !== X$1 && (Xj ? (a = X$1, c = c.stateNode, 8 === a.nodeType ? a.parentNode.removeChild(c) : a.removeChild(c)) : X$1.removeChild(c.stateNode));
       break;
     case 18:
-      null !== X && (Xj ? (a = X, c = c.stateNode, 8 === a.nodeType ? Kf(a.parentNode, c) : 1 === a.nodeType && Kf(a, c), bd(a)) : Kf(X, c.stateNode));
+      null !== X$1 && (Xj ? (a = X$1, c = c.stateNode, 8 === a.nodeType ? Kf(a.parentNode, c) : 1 === a.nodeType && Kf(a, c), bd(a)) : Kf(X$1, c.stateNode));
       break;
     case 4:
-      d = X;
+      d = X$1;
       e = Xj;
-      X = c.stateNode.containerInfo;
+      X$1 = c.stateNode.containerInfo;
       Xj = true;
       Yj(a, b, c);
-      X = d;
+      X$1 = d;
       Xj = e;
       break;
     case 0:
@@ -5100,23 +5100,23 @@ function ck(a, b) {
       a: for (; null !== h; ) {
         switch (h.tag) {
           case 5:
-            X = h.stateNode;
+            X$1 = h.stateNode;
             Xj = false;
             break a;
           case 3:
-            X = h.stateNode.containerInfo;
+            X$1 = h.stateNode.containerInfo;
             Xj = true;
             break a;
           case 4:
-            X = h.stateNode.containerInfo;
+            X$1 = h.stateNode.containerInfo;
             Xj = true;
             break a;
         }
         h = h.return;
       }
-      if (null === X) throw Error(p(160));
+      if (null === X$1) throw Error(p(160));
       Zj(f2, g, e);
-      X = null;
+      X$1 = null;
       Xj = false;
       var k2 = e.alternate;
       null !== k2 && (k2.return = null);
@@ -7038,8 +7038,16 @@ const useSessionStore = create((set) => ({
   selectImage: (selectedId) => set({ selectedId }),
   loras: [],
   setLoras: (loras) => set({ loras }),
+  refreshLoras: async () => {
+    const loras = await window.electronAPI.loras.list();
+    set({ loras });
+  },
   models: [],
   setModels: (models) => set({ models }),
+  refreshModels: async () => {
+    const models = await window.electronAPI.models.list();
+    set({ models });
+  },
   comfyUrl: "http://127.0.0.1:8188",
   setComfyUrl: (comfyUrl) => set({ comfyUrl }),
   theme: localStorage.getItem("anima-theme") || "dark",
@@ -7164,6 +7172,13 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const Check = createLucideIcon("Check", [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const ChevronDown = createLucideIcon("ChevronDown", [
   ["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]
 ]);
@@ -7234,6 +7249,39 @@ const Eye = createLucideIcon("Eye", [
     }
   ],
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const FolderOpen = createLucideIcon("FolderOpen", [
+  [
+    "path",
+    {
+      d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
+      key: "usdka0"
+    }
+  ]
+]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const HardDrive = createLucideIcon("HardDrive", [
+  ["line", { x1: "22", x2: "2", y1: "12", y2: "12", key: "1y58io" }],
+  [
+    "path",
+    {
+      d: "M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
+      key: "oot6mr"
+    }
+  ],
+  ["line", { x1: "6", x2: "6.01", y1: "16", y2: "16", key: "sgf278" }],
+  ["line", { x1: "10", x2: "10.01", y1: "16", y2: "16", key: "1l4acy" }]
 ]);
 /**
  * @license lucide-react v0.460.0 - ISC
@@ -7312,6 +7360,35 @@ const PanelLeftOpen = createLucideIcon("PanelLeftOpen", [
   ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2", key: "afitv7" }],
   ["path", { d: "M9 3v18", key: "fh3hqa" }],
   ["path", { d: "m14 9 3 3-3 3", key: "8010ee" }]
+]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const RefreshCw = createLucideIcon("RefreshCw", [
+  ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
+  ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
+  ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
+  ["path", { d: "M8 16H3v5", key: "1cv678" }]
+]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Save = createLucideIcon("Save", [
+  [
+    "path",
+    {
+      d: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+      key: "1c8476"
+    }
+  ],
+  ["path", { d: "M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7", key: "1ydtos" }],
+  ["path", { d: "M7 3v4a1 1 0 0 0 1 1h7", key: "t51u73" }]
 ]);
 /**
  * @license lucide-react v0.460.0 - ISC
@@ -7417,6 +7494,16 @@ const Wifi = createLucideIcon("Wifi", [
   ["path", { d: "M2 8.82a15 15 0 0 1 20 0", key: "dnpr2z" }],
   ["path", { d: "M5 12.859a10 10 0 0 1 14 0", key: "1x1e6c" }],
   ["path", { d: "M8.5 16.429a5 5 0 0 1 7 0", key: "1bycff" }]
+]);
+/**
+ * @license lucide-react v0.460.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const X = createLucideIcon("X", [
+  ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+  ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ]);
 function HistoryPanel() {
   const { history, selectedId, selectImage } = useSessionStore();
@@ -7598,6 +7685,7 @@ function useGenerator() {
         addToHistory(entry);
         useSessionStore.getState().selectImage(entry.id);
       }
+      useSessionStore.getState().params.randomizeSeed();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao gerar imagem");
     } finally {
@@ -7636,10 +7724,25 @@ function SafeImage({ path, alt, className }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src, alt, className });
 }
 function PromptPanel() {
-  const { params, generating, progress, status, loras, models } = useSessionStore();
+  const { params, generating, progress, status, loras, models, refreshLoras } = useSessionStore();
   const { generate, error } = useGenerator();
   const [modelsOpen, setModelsOpen] = reactExports.useState(false);
-  const [lorasOpen, setLorasOpen] = reactExports.useState(true);
+  const [lorasOpen, setLorasOpen] = reactExports.useState(false);
+  const [refreshingLoras, setRefreshingLoras] = reactExports.useState(false);
+  const [lorasRefreshed, setLorasRefreshed] = reactExports.useState(false);
+  const loraRefreshTimer = reactExports.useRef();
+  const handleRefreshLoras = reactExports.useCallback(async () => {
+    if (refreshingLoras) return;
+    setRefreshingLoras(true);
+    try {
+      await refreshLoras();
+      setLorasRefreshed(true);
+      clearTimeout(loraRefreshTimer.current);
+      loraRefreshTimer.current = setTimeout(() => setLorasRefreshed(false), 1500);
+    } finally {
+      setRefreshingLoras(false);
+    }
+  }, [refreshLoras, refreshingLoras]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-4 space-y-4 overflow-y-auto", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
@@ -7776,18 +7879,33 @@ function PromptPanel() {
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            onClick: () => setLorasOpen(!lorasOpen),
-            className: "flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 w-full text-left",
-            children: [
-              lorasOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronUp, { size: 14 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 14 }),
-              "LoRA",
-              params.loraName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-1 text-accent font-normal normal-case", children: "(ativo)" })
-            ]
-          }
-        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 mb-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              onClick: () => setLorasOpen(!lorasOpen),
+              className: "flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider text-left flex-1",
+              children: [
+                lorasOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronUp, { size: 14 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 14 }),
+                "LoRA",
+                params.loraName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-1 text-accent font-normal normal-case", children: "(ativo)" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: handleRefreshLoras,
+              disabled: refreshingLoras,
+              className: `
+                p-1 rounded-lg shrink-0 transition-all duration-300
+                ${lorasRefreshed ? "bg-success/20 text-success" : refreshingLoras ? "bg-accent/10 text-accent" : "hover:bg-surface-tertiary text-text-muted hover:text-text-primary"}
+              `,
+              title: "Atualizar lista de LoRAs",
+              children: lorasRefreshed ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 12, className: "animate-[ping_0.3s_ease-out]" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 12, className: refreshingLoras ? "animate-spin" : "" })
+            }
+          )
+        ] }),
         lorasOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           loras.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-text-muted", children: "Nenhum LoRA encontrado em D:\\ComfyUI_windows_portable\\ComfyUI\\models\\loras" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-h-60 overflow-y-auto custom-scroll", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-3 gap-2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -7948,15 +8066,123 @@ function StatusBar({ status }) {
     }
   ) });
 }
+function SettingsModal({ open, onClose }) {
+  const [settings, setSettings] = reactExports.useState({
+    comfyUIPath: "",
+    modelsPath: "",
+    lorasPath: ""
+  });
+  const [saving, setSaving] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    if (open) {
+      window.electronAPI.settings.get().then(setSettings);
+    }
+  }, [open]);
+  if (!open) return null;
+  const handleSelectDir = async (key) => {
+    const path = await window.electronAPI.settings.selectDir();
+    if (path) {
+      setSettings((prev) => ({ ...prev, [key]: path }));
+    }
+  };
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await window.electronAPI.settings.set(settings);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const fields = [
+    { key: "comfyUIPath", label: "Pasta do ComfyUI", icon: HardDrive, placeholder: "D:\\ComfyUI_windows_portable" },
+    { key: "modelsPath", label: "Pasta de Modelos", icon: HardDrive, placeholder: "(derivado do ComfyUI)" },
+    { key: "lorasPath", label: "Pasta de LoRAs", icon: HardDrive, placeholder: "(derivado do ComfyUI)" }
+  ];
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-lg bg-surface-secondary rounded-2xl border border-border shadow-2xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between px-6 py-4 border-b border-border", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-sm font-semibold text-text-primary", children: "Configurações" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: onClose,
+          className: "p-1 rounded-lg hover:bg-surface-tertiary text-text-muted hover:text-text-primary transition-colors",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 16 })
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-6 py-4 space-y-4", children: fields.map(({ key, label, icon: Icon2, placeholder }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "block text-xs font-medium text-text-secondary mb-1.5", children: label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 flex items-center gap-2 bg-surface rounded-lg border border-border px-3 py-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { size: 14, className: "text-text-muted shrink-0" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "text",
+              value: settings[key],
+              onChange: (e) => setSettings((prev) => ({ ...prev, [key]: e.target.value })),
+              placeholder,
+              className: "flex-1 bg-transparent text-xs text-text-primary font-mono outline-none placeholder:text-text-muted/50"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            onClick: () => handleSelectDir(key),
+            className: "flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary text-xs transition-colors",
+            title: "Selecionar pasta",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { size: 14 })
+          }
+        )
+      ] })
+    ] }, key)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-end gap-2 px-6 py-4 border-t border-border", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: onClose,
+          className: "px-4 py-2 rounded-lg text-xs text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition-colors",
+          children: "Cancelar"
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          onClick: handleSave,
+          disabled: saving,
+          className: "flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs hover:bg-accent-hover transition-colors disabled:opacity-50",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Save, { size: 14 }),
+            saving ? "Salvando..." : "Salvar"
+          ]
+        }
+      )
+    ] })
+  ] }) });
+}
+function ChibiLogo() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { viewBox: "0 0 32 32", className: "w-5 h-5", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "10.5", cy: "13", r: "3", fill: "white" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "21.5", cy: "13", r: "3", fill: "white" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "10.5", cy: "13", r: "1.5", fill: "#1a1a2e" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "21.5", cy: "13", r: "1.5", fill: "#1a1a2e" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "11.5", cy: "12", r: "0.6", fill: "white" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "22.5", cy: "12", r: "0.6", fill: "white" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M10 20C12 22 20 22 22 20", stroke: "white", strokeWidth: "1.5", strokeLinecap: "round" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "18", r: "1.8", fill: "white", opacity: "0.25" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "25", cy: "18", r: "1.8", fill: "white", opacity: "0.25" })
+  ] });
+}
 function App() {
-  const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setLoras, setModels, comfyUrl, setComfyUrl, loras, models } = useSessionStore();
+  const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setLoras, setModels, loras, models } = useSessionStore();
   const [initialized, setInitialized] = reactExports.useState(false);
   const [historyOpen, setHistoryOpen] = reactExports.useState(() => {
     const stored = localStorage.getItem("anima-history-open");
     return stored !== null ? stored === "true" : true;
   });
-  const [showUrlInput, setShowUrlInput] = reactExports.useState(false);
-  const [urlInput, setUrlInput] = reactExports.useState(comfyUrl);
+  const [settingsOpen, setSettingsOpen] = reactExports.useState(false);
   const loadResources = reactExports.useCallback(async () => {
     try {
       const [loras2, models2] = await Promise.all([
@@ -7975,7 +8201,6 @@ function App() {
     const unsubError = window.electronAPI.comfyui.onLaunchError((message) => {
       console.error("[Anima] Erro ao iniciar ComfyUI:", message);
     });
-    window.electronAPI.comfyui.launch();
     const init = async () => {
       await loadResources();
       setInitialized(true);
@@ -8003,11 +8228,6 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
-  const handleUrlSave = async () => {
-    await window.electronAPI.comfyui.setUrl(urlInput);
-    setComfyUrl(urlInput);
-    setShowUrlInput(false);
-  };
   if (!initialized) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-screen flex items-center justify-center bg-surface", "data-theme": theme, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full" }) });
   }
@@ -8027,37 +8247,17 @@ function App() {
             children: historyOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(PanelLeftClose, { size: 16 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(PanelLeftOpen, { size: 16 })
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white text-xs font-bold", children: "A" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-7 h-7 rounded-lg bg-accent flex items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ChibiLogo, {}) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-semibold text-sm", children: "Anima" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-surface-tertiary", children: "v2" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ml-auto flex items-center gap-3", children: [
-        showUrlInput ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              type: "text",
-              value: urlInput,
-              onChange: (e) => setUrlInput(e.target.value),
-              placeholder: "http://127.0.0.1:8188",
-              className: "w-48 bg-surface rounded border border-border px-2 py-1 text-xs text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent",
-              autoFocus: true,
-              onKeyDown: (e) => {
-                if (e.key === "Enter") handleUrlSave();
-                if (e.key === "Escape") setShowUrlInput(false);
-              }
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: handleUrlSave, className: "px-2 py-1 rounded bg-accent text-white text-xs hover:bg-accent-hover transition-colors", children: "OK" })
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            onClick: () => {
-              setUrlInput(comfyUrl);
-              setShowUrlInput(true);
-            },
+            onClick: () => setSettingsOpen(true),
             className: "p-1.5 rounded-lg hover:bg-surface-tertiary text-text-secondary hover:text-text-primary transition-colors",
-            title: "Configurar URL do ComfyUI",
+            title: "Configurações",
             children: /* @__PURE__ */ jsxRuntimeExports.jsx(Settings, { size: 16 })
           }
         ),
@@ -8085,7 +8285,8 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: `${historyOpen ? "w-72" : "w-0"} hidden lg:block border-r border-border bg-surface-secondary overflow-hidden shrink-0 transition-all duration-300`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-72 overflow-y-auto h-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HistoryPanel, {}) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "flex-1 flex items-center justify-center bg-surface overflow-hidden min-w-0", children: /* @__PURE__ */ jsxRuntimeExports.jsx(PreviewPanel, {}) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-border bg-surface-secondary overflow-y-auto shrink-0 max-h-[40vh] lg:max-h-none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(PromptPanel, {}) })
-    ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsModal, { open: settingsOpen, onClose: () => setSettingsOpen(false) })
   ] });
 }
 client.createRoot(document.getElementById("root")).render(
