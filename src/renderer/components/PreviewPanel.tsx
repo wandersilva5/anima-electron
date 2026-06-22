@@ -95,8 +95,21 @@ export function PreviewPanel() {
           </button>
         </div>
 
-        <div className="mt-4 p-3 rounded-xl bg-surface-secondary/80 border border-border/50 text-xs w-full max-w-md">
-          <div className="font-medium text-text-secondary mb-2">Metadados</div>
+        <div className="mt-4 p-3 rounded-xl bg-surface-secondary/80 border border-border/50 text-xs w-full max-w-md space-y-3">
+          <div className="font-medium text-text-secondary">Metadados</div>
+
+          <div>
+            <span className="text-text-muted">Prompt</span>
+            <p className="text-text-primary mt-0.5 leading-relaxed break-words">{selected.params.prompt}</p>
+          </div>
+
+          {selected.params.negativePrompt && (
+            <div>
+              <span className="text-text-muted">Prompt Negativo</span>
+              <p className="text-text-primary mt-0.5 leading-relaxed break-words">{selected.params.negativePrompt}</p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
             {loadMetadata(selected).map((m) => (
               <div key={m.label} className="flex justify-between">
