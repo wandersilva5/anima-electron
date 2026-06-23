@@ -51,16 +51,16 @@ export function PreviewPanel() {
   ]
 
   return (
-    <div className="flex flex-col items-center justify-center w-full h-full p-6">
-      <div className="relative max-w-full max-h-full flex flex-col items-center">
-        <div className="relative rounded-2xl overflow-hidden shadow-2xl bg-surface-secondary group">
+    <div className="flex w-full h-full p-6 gap-6 overflow-hidden">
+      <div className="flex-1 flex items-center justify-center h-full min-w-0 overflow-hidden">
+        <div className="relative h-full flex items-center justify-center rounded-2xl overflow-hidden shadow-2xl bg-surface-secondary group" style={{ aspectRatio: `${selected.params.width}/${selected.params.height}`, maxHeight: '100%' }}>
           <img
             src={imgSrc ?? ''}
             alt="Generated"
-            className={`max-w-[85vh] max-h-[70vh] object-contain transition-all duration-300 ${blurred ? 'blur-[40px] scale-105' : ''}`}
+            className={`absolute inset-0 w-full h-full object-contain transition-all duration-300 ${blurred ? 'blur-[40px] scale-105' : ''}`}
           />
           {blurred && (
-            <div className="absolute inset-0 flex items-center justify-center">
+            <div className="absolute inset-0 flex items-center justify-center z-10">
               <div className="text-center">
                 <EyeOff size={32} className="mx-auto mb-2 text-text-muted" />
                 <p className="text-sm text-text-muted">Imagem oculta por segurança</p>
@@ -69,8 +69,10 @@ export function PreviewPanel() {
             </div>
           )}
         </div>
+      </div>
 
-        <div className="flex items-center gap-2 mt-4">
+      <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setBlurred(!blurred)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary text-xs transition-colors"
@@ -95,7 +97,7 @@ export function PreviewPanel() {
           </button>
         </div>
 
-        <div className="mt-4 p-3 rounded-xl bg-surface-secondary/80 border border-border/50 text-xs w-full max-w-md space-y-3">
+        <div className="p-3 rounded-xl bg-surface-secondary/80 border border-border/50 text-xs space-y-3">
           <div className="font-medium text-text-secondary">Metadados</div>
 
           <div>

@@ -26,11 +26,20 @@ anima-electron/
 │   ├── renderer/             # Interface React
 │   │   ├── index.html        # Entry HTML
 │   │   ├── main.tsx          # Bootstrap React
-│   │   ├── App.tsx           # Layout principal
+│   │   ├── App.tsx           # Layout principal (carrega histórico salvo)
 │   │   ├── components/       # Componentes da UI
-│   │   ├── stores/           # Estado global (Zustand)
-│   │   ├── hooks/            # Hooks customizados
-│   │   └── styles/           # CSS (Tailwind)
+│   │   │   ├── PromptPanel.tsx    # Inputs, modelos, LoRAs com busca
+│   │   │   ├── PreviewPanel.tsx   # Preview lado a lado + metadados
+│   │   │   ├── HistoryPanel.tsx   # Histórico com seleção/exclusão
+│   │   │   ├── SettingsModal.tsx  # Configurações de paths
+│   │   │   ├── StatusBar.tsx      # Status do ComfyUI
+│   │   │   └── SafeImage.tsx      # Imagem lazy-load do disco
+│   │   ├── stores/
+│   │   │   └── sessionStore.ts # Estado global (Zustand)
+│   │   ├── hooks/
+│   │   │   └── useGenerator.ts # Hook de geração
+│   │   └── styles/
+│   │       └── global.css      # CSS (Tailwind + variáveis)
 │   └── shared/
 │       ├── types.ts          # Tipos TypeScript compartilhados
 │       └── electron-api.d.ts # Tipos da API exposta ao renderer
@@ -72,9 +81,13 @@ As configurações ficam salvas em `%APPDATA%/anima-electron/settings.json`.
 - Inicia/para o ComfyUI automaticamente
 - Monitora status do ComfyUI (online/offline/iniciando)
 - Lista modelos e LoRAs disponíveis com preview visual
+- Busca/filtro de LoRAs com botão limpar
 - Parâmetros de geração: seed, steps, CFG, resolução, força do LoRA
-- Histórico de gerações com miniaturas
-- Preview com blur de segurança e metadados
+- Histórico persistente com imagens salvas em disco (`<userData>/history/`)
+- Metadados completos salvos junto com cada imagem (prompt, modelo, LoRA, parâmetros)
+- Exclusão de itens do histórico individual (hover) ou múltipla (modo seleção)
+- Preview lado a lado: imagem 100% altura + painel de metadados
+- Blur de segurança nas imagens
 - Temas dark e light
 - Atalho **Ctrl+Enter** para gerar
 - Download de imagens
@@ -91,6 +104,56 @@ As configurações ficam salvas em `%APPDATA%/anima-electron/settings.json`.
 | `npm run dist:linux` | Empacotar AppImage Linux |
 | `npm run typecheck` | Verificar tipos TypeScript |
 | `npm run lint` | Verificar código com ESLint |
+
+## Histórico Persistente
+
+As imagens geradas e seus metadados são salvos automaticamente em disco:
+
+```
+{userData}/history/
+├── {promptId}/
+│   ├── image.png
+│   └── metadata.json
+├── {promptId}/
+│   ├── image.png
+│   └── metadata.json
+└── ...
+```
+
+Onde `{userData}` no Windows é `%APPDATA%/anima-electron`.
+
+### metadata.json
+
+```json
+{
+  "params": {
+    "prompt": "...",
+    "negativePrompt": "...",
+    "seed": 123456,
+    "steps": 20,
+    "cfg": 5,
+    "width": 648,
+    "height": 1152,
+    "modelName": "anima/JANIMA_v10.safetensors",
+    "loraName": null,
+    "loraStrengthModel": 0.5,
+    "loraStrengthClip": 0.5
+  },
+  "filename": "ComfyUI_00001_.png",
+  "timestamp": 1719000000000
+}
+```
+
+Ao iniciar o app, o histórico é carregado do disco. Imagens são carregadas sob demanda (lazy loading) para preservar memória.
+
+### IPC Channels
+
+| Canal | Descrição |
+|-------|-----------|
+| `comfyui:generate` | Envia prompt ao ComfyUI, salva imagem + metadados em disco |
+| `file:loadHistory` | Carrega lista de itens do histórico do disco |
+| `file:deleteHistoryItems` | Exclui itens do histórico (disco + lista) |
+| `file:readImage` | Lê imagem do disco e retorna como data URI |
 
 ## Stack
 
