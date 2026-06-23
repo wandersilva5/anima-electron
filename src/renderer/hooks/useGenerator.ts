@@ -10,10 +10,27 @@ export function useGenerator() {
 
   const generate = useCallback(async () => {
     if (generatingRef.current) return
+    setError(null)
+
+    if (!params.modelName) {
+      setError('Selecione um modelo antes de gerar a imagem.')
+      return
+    }
+
+    const { models, loras } = useSessionStore.getState()
+    if (models.length > 0 && !models.some((m) => m.name === params.modelName)) {
+      setError(`Modelo "${params.modelName}" não encontrado. Selecione um modelo disponível.`)
+      return
+    }
+
+    if (params.loraName && loras.length > 0 && !loras.some((l) => l.name === params.loraName)) {
+      setError(`LoRA "${params.loraName}" não encontrado. Selecione um LoRA válido ou remova a seleção.`)
+      return
+    }
+
     generatingRef.current = true
     setGenerating(true)
     setProgress(null)
-    setError(null)
 
     const {
       setPrompt: _sp, setNegativePrompt: _snp, setSeed: _ss, setSteps: _sst,
