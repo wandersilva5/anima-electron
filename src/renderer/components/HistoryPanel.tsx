@@ -114,10 +114,12 @@ export function HistoryPanel() {
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleteIds, setDeleteIds] = useState<Set<string>>(new Set())
 
-  const handleDelete = useCallback(async (ids: string[]) => {
-    if (ids.length === 0) return
-    await window.electronAPI.file.deleteHistoryItems(ids)
-    deleteHistory(ids)
+  const handleDelete = useCallback(async (items: { id: string; filePath: string | null }[]) => {
+    if (items.length === 0) return
+    await window.electronAPI.file.deleteHistoryItems(
+      items.map(({ id, filePath }) => ({ id, filePath: filePath ?? '' }))
+    )
+    deleteHistory(items.map((i) => i.id))
   }, [deleteHistory])
 
   const toggleDelete = useCallback((id: string) => {
@@ -131,13 +133,14 @@ export function HistoryPanel() {
 
   const handleDeleteSelected = useCallback(async () => {
     if (deleteIds.size === 0) return
-    await handleDelete(Array.from(deleteIds))
+    const items = history.filter((h) => deleteIds.has(h.id)).map((h) => ({ id: h.id, filePath: h.filePath }))
+    await handleDelete(items)
     setDeleteIds(new Set())
     setDeleteMode(false)
-  }, [deleteIds, handleDelete])
+  }, [deleteIds, history, handleDelete])
 
-  const handleIndividualDelete = useCallback(async (id: string) => {
-    await handleDelete([id])
+  const handleIndividualDelete = useCallback(async (id: string, filePath: string | null) => {
+    await handleDelete([{ id, filePath }])
   }, [handleDelete])
 
   const cancelDelete = useCallback(() => {
@@ -209,7 +212,7 @@ export function HistoryPanel() {
             deleteSelected={deleteIds.has(item.id)}
             onToggleSelect={() => toggleDelete(item.id)}
             onSelect={() => selectImage(item.id === selectedId ? null : item.id)}
-            onDelete={() => handleIndividualDelete(item.id)}
+            onDelete={() => handleIndividualDelete(item.id, item.filePath)}
           />
         ))}
       </div>

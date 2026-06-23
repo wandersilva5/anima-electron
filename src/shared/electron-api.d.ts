@@ -40,7 +40,7 @@ interface ElectronAPI {
   }
   file: {
     loadHistory: () => Promise<SavedHistoryItem[]>
-    deleteHistoryItems: (ids: string[]) => Promise<void>
+    deleteHistoryItems: (items: { id: string; filePath: string }[]) => Promise<void>
     readImage: (filePath: string) => Promise<string | null>
   }
 }

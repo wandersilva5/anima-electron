@@ -244,14 +244,16 @@ function setupIPC(): void {
     return items
   })
 
-  ipcMain.handle('file:deleteHistoryItems', async (_event, ids: string[]) => {
-    const historyBaseDir = join(app.getPath('userData'), 'history')
-    for (const id of ids) {
-      const dirPath = join(historyBaseDir, id)
+  ipcMain.handle('file:deleteHistoryItems', async (_event, items: { id: string; filePath: string }[]) => {
+    for (const { id, filePath } of items) {
+      if (filePath && existsSync(filePath)) {
+        rmSync(filePath, { force: true })
+      }
+      const dirPath = join(app.getPath('userData'), 'history', id)
       if (existsSync(dirPath)) {
         rmSync(dirPath, { recursive: true, force: true })
-        console.log(`[Anima] Histórico excluído: ${id}`)
       }
+      console.log(`[Anima] Histórico excluído: ${id}`)
     }
   })
 }
