@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   file: {
     loadHistory: () => ipcRenderer.invoke("file:loadHistory"),
-    deleteHistoryItems: (ids) => ipcRenderer.invoke("file:deleteHistoryItems", ids),
+    deleteHistoryItems: (items) => ipcRenderer.invoke("file:deleteHistoryItems", items),
     readImage: (filePath) => ipcRenderer.invoke("file:readImage", filePath)
   }
 });

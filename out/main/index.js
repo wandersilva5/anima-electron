@@ -330,11 +330,13 @@ class LoraScanner {
         results.push(...this.scanRecursive(fullPath, subPrefix));
       } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt")) {
         const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name;
-        results.push({
-          name: relativeName,
-          path: fullPath,
-          previewUrl: this.findPreview(entry.name, dir)
-        });
+        if (relativeName.toLowerCase().includes("anima")) {
+          results.push({
+            name: relativeName,
+            path: fullPath,
+            previewUrl: this.findPreview(entry.name, dir)
+          });
+        }
       }
     }
     return results;
@@ -663,14 +665,16 @@ function setupIPC() {
     items.sort((a, b) => b.timestamp - a.timestamp);
     return items;
   });
-  ipcMain.handle("file:deleteHistoryItems", async (_event, ids) => {
-    const historyBaseDir = join(app.getPath("userData"), "history");
-    for (const id of ids) {
-      const dirPath = join(historyBaseDir, id);
+  ipcMain.handle("file:deleteHistoryItems", async (_event, items) => {
+    for (const { id, filePath } of items) {
+      if (filePath && existsSync(filePath)) {
+        rmSync(filePath, { force: true });
+      }
+      const dirPath = join(app.getPath("userData"), "history", id);
       if (existsSync(dirPath)) {
         rmSync(dirPath, { recursive: true, force: true });
-        console.log(`[Anima] Histórico excluído: ${id}`);
       }
+      console.log(`[Anima] Histórico excluído: ${id}`);
     }
   });
 }

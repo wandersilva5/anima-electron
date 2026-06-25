@@ -35,11 +35,13 @@ export class LoraScanner {
         results.push(...this.scanRecursive(fullPath, subPrefix))
       } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt')) {
         const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name
-        results.push({
-          name: relativeName,
-          path: fullPath,
-          previewUrl: this.findPreview(entry.name, dir)
-        })
+        if (relativeName.toLowerCase().includes('anima')) {
+          results.push({
+            name: relativeName,
+            path: fullPath,
+            previewUrl: this.findPreview(entry.name, dir)
+          })
+        }
       }
     }
 
