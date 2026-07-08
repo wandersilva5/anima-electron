@@ -35,7 +35,7 @@ export function useGenerator() {
     const {
       setPrompt: _sp, setNegativePrompt: _snp, setSeed: _ss, setSteps: _sst,
       setCfg: _sc, setWidth: _sw, setHeight: _sh, setLora: _sl, setModel: _sm,
-      randomizeSeed: _rs,
+      setDiffusionModel: _sdm, randomizeSeed: _rs,
       ...dataParams
     } = params
 

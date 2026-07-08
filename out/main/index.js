@@ -199,21 +199,110 @@ class ComfyLauncher {
     }
   }
 }
-class WorkflowManager {
-  constructor(workflowPath) {
-    const raw = readFileSync(workflowPath, "utf-8");
-    this.workflow = JSON.parse(raw);
-    this.defaults = this.extractDefaults();
+const MODEL_PROFILES = {
+  anima: {
+    id: "anima",
+    label: "Anima",
+    description: "Modelo Anima — estilo anime detalhado",
+    workflowFile: "anima-simples.json",
+    loraFolder: "Anima",
+    hasNegativePrompt: true,
+    hasLoraClipStrength: true,
+    defaults: {
+      steps: 20,
+      cfg: 5,
+      width: 648,
+      height: 1152,
+      sampler: "er_sde",
+      scheduler: "simple"
+    }
+  },
+  krea2: {
+    id: "krea2",
+    label: "Krea2",
+    description: "Krea2 Turbo — geração rápida, sem prompt negativo",
+    workflowFile: "Krea2 - Simples.json",
+    loraFolder: "Krea2",
+    hasNegativePrompt: false,
+    hasLoraClipStrength: true,
+    defaults: {
+      steps: 8,
+      cfg: 1,
+      width: 512,
+      height: 1024,
+      sampler: "euler",
+      scheduler: "simple"
+    }
+  },
+  "z-image": {
+    id: "z-image",
+    label: "Z-Image",
+    description: "Z-Image Turbo — GGUF quantizado, rápido",
+    workflowFile: "Z-Image Turbo.json",
+    loraFolder: "z-image",
+    hasNegativePrompt: true,
+    hasLoraClipStrength: false,
+    defaults: {
+      steps: 9,
+      cfg: 1,
+      width: 704,
+      height: 1024,
+      sampler: "euler",
+      scheduler: "normal"
+    }
   }
-  extractDefaults() {
-    const nodes = this.workflow.nodes;
+};
+function findOriginNode(workflow, targetNodeId, inputName) {
+  const node = workflow.nodes.find((n) => n.id === targetNodeId);
+  if (!node || !node.inputs) return void 0;
+  const input = node.inputs.find((i) => i.name === inputName);
+  if (!input || input.link === null) return void 0;
+  const link = workflow.links.find((l) => l[0] === input.link);
+  if (!link) return void 0;
+  const originNodeId = link[1];
+  return workflow.nodes.find((n) => n.id === originNodeId);
+}
+class WorkflowManager {
+  constructor(workflowsDir) {
+    this.workflows = {};
+    for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
+      try {
+        const filePath = join(workflowsDir, profile.workflowFile);
+        const raw = readFileSync(filePath, "utf-8");
+        const workflow = JSON.parse(raw);
+        let positiveNodeId = null;
+        let negativeNodeId = null;
+        const ksampler = workflow.nodes.find((n) => n.type === "KSampler");
+        if (ksampler) {
+          const posNode = findOriginNode(workflow, ksampler.id, "positive");
+          if (posNode && posNode.type === "CLIPTextEncode") {
+            positiveNodeId = posNode.id;
+          }
+          const negNode = findOriginNode(workflow, ksampler.id, "negative");
+          if (negNode && negNode.type === "CLIPTextEncode") {
+            negativeNodeId = negNode.id;
+          }
+        }
+        const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId);
+        this.workflows[modelId] = {
+          workflow,
+          positiveNodeId,
+          negativeNodeId,
+          defaults
+        };
+      } catch (err) {
+        console.error(`[WorkflowManager] Erro ao carregar workflow para ${modelId}:`, err);
+      }
+    }
+  }
+  extractDefaults(workflow, positiveNodeId, negativeNodeId) {
+    const nodes = workflow.nodes;
     const ksampler = nodes.find((n) => n.type === "KSampler");
-    const emptyLatent = nodes.find((n) => n.type === "EmptyLatentImage");
-    const clipTextEncodes = nodes.filter((n) => n.type === "CLIPTextEncode");
-    const positiveEncode = clipTextEncodes[0];
-    const negativeEncode = clipTextEncodes[1];
-    const loraLoader = nodes.find((n) => n.type === "LoraLoader");
-    const unetLoader = nodes.find((n) => n.type === "UNETLoader");
+    const emptyLatent = nodes.find((n) => n.type === "EmptyLatentImage" || n.type === "EmptySD3LatentImage");
+    const positiveEncode = positiveNodeId !== null ? nodes.find((n) => n.id === positiveNodeId) : null;
+    const negativeEncode = negativeNodeId !== null ? nodes.find((n) => n.id === negativeNodeId) : null;
+    const loraLoader = nodes.find((n) => n.type === "LoraLoader" || n.type === "LoraLoaderModelOnly");
+    const unetLoader = nodes.find((n) => n.type === "UNETLoader" || n.type === "UnetLoaderGGUF");
     return {
       steps: ksampler?.widgets_values?.[2] ?? 20,
       cfg: ksampler?.widgets_values?.[3] ?? 5,
@@ -227,17 +316,25 @@ class WorkflowManager {
       negativePrompt: negativeEncode?.widgets_values?.[0] ?? "",
       loraName: loraLoader?.widgets_values?.[0] ?? "None",
       loraStrengthModel: loraLoader?.widgets_values?.[1] ?? 0.5,
-      loraStrengthClip: loraLoader?.widgets_values?.[2] ?? 0.5,
-      modelName: unetLoader?.widgets_values?.[0] ?? "anima/JANIMA_v10.safetensors"
+      loraStrengthClip: loraLoader?.type === "LoraLoader" ? loraLoader.widgets_values?.[2] : 0.5,
+      modelName: unetLoader?.widgets_values?.[0] ?? ""
     };
   }
-  getDefaults() {
-    return { ...this.defaults };
+  getDefaults(modelId = "anima") {
+    const data = this.workflows[modelId];
+    if (!data) {
+      throw new Error(`Workflow defaults not found for model: ${modelId}`);
+    }
+    return { ...data.defaults };
   }
   buildPrompt(params) {
-    const nodes = structuredClone(this.workflow.nodes);
+    const modelId = params.diffusionModel || "anima";
+    const data = this.workflows[modelId];
+    if (!data) {
+      throw new Error(`Workflow not loaded for model: ${modelId}`);
+    }
+    const nodes = structuredClone(data.workflow.nodes);
     const prompt = {};
-    let clipEncodeIndex = 0;
     for (const node of nodes) {
       const widgetValues = [...node.widgets_values ?? []];
       switch (node.type) {
@@ -248,18 +345,18 @@ class WorkflowManager {
           widgetValues.splice(1, 1);
           break;
         }
-        case "EmptyLatentImage": {
+        case "EmptyLatentImage":
+        case "EmptySD3LatentImage": {
           widgetValues[0] = params.width;
           widgetValues[1] = params.height;
           break;
         }
         case "CLIPTextEncode": {
-          if (clipEncodeIndex === 0) {
+          if (node.id === data.positiveNodeId) {
             widgetValues[0] = params.prompt;
-          } else if (clipEncodeIndex === 1) {
+          } else if (node.id === data.negativeNodeId) {
             widgetValues[0] = params.negativePrompt;
           }
-          clipEncodeIndex++;
           break;
         }
         case "LoraLoader": {
@@ -272,7 +369,17 @@ class WorkflowManager {
           widgetValues[2] = params.loraStrengthClip;
           break;
         }
-        case "UNETLoader": {
+        case "LoraLoaderModelOnly": {
+          if (params.loraName) {
+            widgetValues[0] = params.loraName;
+          } else {
+            widgetValues[0] = "None";
+          }
+          widgetValues[1] = params.loraStrengthModel;
+          break;
+        }
+        case "UNETLoader":
+        case "UnetLoaderGGUF": {
           widgetValues[0] = params.modelName;
           break;
         }
@@ -286,7 +393,7 @@ class WorkflowManager {
         let widgetIndex = 0;
         for (const input of node.inputs) {
           if (input.link !== null) {
-            const link = this.workflow.links.find((l) => l[0] === input.link);
+            const link = data.workflow.links.find((l) => l[0] === input.link);
             if (link) {
               inputs[input.name] = [String(link[1]), link[2]];
             }
@@ -311,32 +418,32 @@ class LoraScanner {
   updatePath(settingsManager) {
     this.settingsManager = settingsManager;
   }
-  scan() {
-    const loraDir = this.settingsManager.resolvedLorasPath;
+  scan(subfolder) {
+    const baseLoraDir = this.settingsManager.resolvedLorasPath;
+    const scanDir = subfolder ? join(baseLoraDir, subfolder) : baseLoraDir;
     try {
-      if (!existsSync(loraDir)) return [];
-      return this.scanRecursive(loraDir, "");
+      if (!existsSync(scanDir)) return [];
+      return this.scanRecursive(scanDir, "", subfolder || "");
     } catch {
       return [];
     }
   }
-  scanRecursive(dir, prefix) {
+  scanRecursive(dir, prefix, subfolder) {
     const entries = readdirSync(dir, { withFileTypes: true });
     const results = [];
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         const subPrefix = prefix ? `${prefix}\\${entry.name}` : entry.name;
-        results.push(...this.scanRecursive(fullPath, subPrefix));
+        results.push(...this.scanRecursive(fullPath, subPrefix, subfolder));
       } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt")) {
         const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name;
-        if (relativeName.toLowerCase().includes("anima")) {
-          results.push({
-            name: relativeName,
-            path: fullPath,
-            previewUrl: this.findPreview(entry.name, dir)
-          });
-        }
+        const loraName = subfolder ? `${subfolder}\\${relativeName}` : relativeName;
+        results.push({
+          name: loraName,
+          path: fullPath,
+          previewUrl: this.findPreview(entry.name, dir)
+        });
       }
     }
     return results;
@@ -375,10 +482,7 @@ class ModelScanner {
       if (!existsSync(fullPath)) continue;
       results.push(...this.scanRecursive(fullPath, type, subdir, baseDir));
     }
-    return results.filter((m) => this.isAnimaModel(m.name));
-  }
-  isAnimaModel(name) {
-    return /(?:^|[\\/])anima(?=$|[\\/])/i.test(name);
+    return results;
   }
   scanRecursive(dir, type, typeDir, baseDir) {
     const results = [];
@@ -522,7 +626,7 @@ function setupIPC() {
   const settings = settingsManager.get();
   comfyClient = new ComfyUIClient("http://127.0.0.1:8188");
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath);
-  workflowManager = new WorkflowManager(join(__dirname, "../../workflows/anima-simples.json"));
+  workflowManager = new WorkflowManager(join(__dirname, "../../workflows"));
   loraScanner = new LoraScanner(settingsManager);
   modelScanner = new ModelScanner(settingsManager);
   ipcMain.handle("comfyui:status", async () => {
@@ -580,9 +684,9 @@ function setupIPC() {
     }
     return { promptId: response.prompt_id, images: savedImages };
   });
-  ipcMain.handle("loras:list", async () => {
-    const loras = loraScanner.scan();
-    console.log(`[Anima] LoRAs encontrados: ${loras.length}`);
+  ipcMain.handle("loras:list", async (_event, subfolder) => {
+    const loras = loraScanner.scan(subfolder);
+    console.log(`[Anima] LoRAs encontrados: ${loras.length} para a subpasta: ${subfolder ?? "todas"}`);
     if (loras.length > 0) console.log(`[Anima] Primeiro LoRA: ${loras[0].name}, preview: ${loras[0].previewUrl ?? "nenhum"}`);
     return loras;
   });
@@ -625,8 +729,11 @@ function setupIPC() {
     });
     return result.canceled ? null : result.filePaths[0];
   });
-  ipcMain.handle("app:getWorkflowDefaults", async () => {
-    return workflowManager.getDefaults();
+  ipcMain.handle("app:getWorkflowDefaults", async (_event, diffusionModel) => {
+    return workflowManager.getDefaults(diffusionModel);
+  });
+  ipcMain.handle("app:getModelProfiles", async () => {
+    return MODEL_PROFILES;
   });
   ipcMain.handle("file:readImage", async (_event, filePath) => {
     try {

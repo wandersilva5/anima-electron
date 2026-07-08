@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   loras: {
-    list: () => ipcRenderer.invoke("loras:list")
+    list: (subfolder) => ipcRenderer.invoke("loras:list", subfolder)
   },
   models: {
     list: () => ipcRenderer.invoke("models:list")
@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     selectDir: () => ipcRenderer.invoke("settings:selectDir")
   },
   app: {
-    getWorkflowDefaults: () => ipcRenderer.invoke("app:getWorkflowDefaults")
+    getWorkflowDefaults: (diffusionModel) => ipcRenderer.invoke("app:getWorkflowDefaults", diffusionModel),
+    getModelProfiles: () => ipcRenderer.invoke("app:getModelProfiles")
   },
   file: {
     loadHistory: () => ipcRenderer.invoke("file:loadHistory"),

@@ -29,11 +29,7 @@ export class ModelScanner {
       results.push(...this.scanRecursive(fullPath, type, subdir, baseDir))
     }
 
-    return results.filter(m => this.isAnimaModel(m.name))
-  }
-
-  private isAnimaModel(name: string): boolean {
-    return /(?:^|[\\/])anima(?=$|[\\/])/i.test(name)
+    return results
   }
 
   private scanRecursive(dir: string, type: ModelInfo['type'], typeDir: string, baseDir: string): ModelInfo[] {

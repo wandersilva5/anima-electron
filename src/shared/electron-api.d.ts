@@ -28,7 +28,7 @@ interface ElectronAPI {
     onLaunchError: (callback: (message: string) => void) => () => void
   }
   loras: {
-    list: () => Promise<LoraInfo[]>
+    list: (subfolder?: string) => Promise<LoraInfo[]>
   }
   models: {
     list: () => Promise<ModelInfo[]>
@@ -37,6 +37,10 @@ interface ElectronAPI {
     get: () => Promise<AppSettings>
     set: (settings: AppSettings) => Promise<AppSettings>
     selectDir: () => Promise<string | null>
+  }
+  app: {
+    getWorkflowDefaults: (diffusionModel?: string) => Promise<any>
+    getModelProfiles: () => Promise<Record<string, import('./types').ModelProfile>>
   }
   file: {
     loadHistory: () => Promise<SavedHistoryItem[]>

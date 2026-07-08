@@ -14,17 +14,18 @@ export class LoraScanner {
     this.settingsManager = settingsManager
   }
 
-  scan(): LoraInfo[] {
-    const loraDir = this.settingsManager.resolvedLorasPath
+  scan(subfolder?: string): LoraInfo[] {
+    const baseLoraDir = this.settingsManager.resolvedLorasPath
+    const scanDir = subfolder ? join(baseLoraDir, subfolder) : baseLoraDir
     try {
-      if (!existsSync(loraDir)) return []
-      return this.scanRecursive(loraDir, '')
+      if (!existsSync(scanDir)) return []
+      return this.scanRecursive(scanDir, '', subfolder || '')
     } catch {
       return []
     }
   }
 
-  private scanRecursive(dir: string, prefix: string): LoraInfo[] {
+  private scanRecursive(dir: string, prefix: string, subfolder: string): LoraInfo[] {
     const entries = readdirSync(dir, { withFileTypes: true })
     const results: LoraInfo[] = []
 
@@ -32,16 +33,15 @@ export class LoraScanner {
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
         const subPrefix = prefix ? `${prefix}\\${entry.name}` : entry.name
-        results.push(...this.scanRecursive(fullPath, subPrefix))
+        results.push(...this.scanRecursive(fullPath, subPrefix, subfolder))
       } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt')) {
         const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name
-        if (relativeName.toLowerCase().includes('anima')) {
-          results.push({
-            name: relativeName,
-            path: fullPath,
-            previewUrl: this.findPreview(entry.name, dir)
-          })
-        }
+        const loraName = subfolder ? `${subfolder}\\${relativeName}` : relativeName
+        results.push({
+          name: loraName,
+          path: fullPath,
+          previewUrl: this.findPreview(entry.name, dir)
+        })
       }
     }
 

@@ -1,4 +1,27 @@
+// Identificador dos 3 modelos de difusão suportados
+export type DiffusionModelId = 'anima' | 'krea2' | 'z-image'
+
+// Perfil completo de um modelo de difusão
+export interface ModelProfile {
+  id: DiffusionModelId
+  label: string
+  description: string
+  workflowFile: string
+  loraFolder: string
+  hasNegativePrompt: boolean
+  hasLoraClipStrength: boolean
+  defaults: {
+    steps: number
+    cfg: number
+    width: number
+    height: number
+    sampler: string
+    scheduler: string
+  }
+}
+
 export interface GenerationParams {
+  diffusionModel: DiffusionModelId
   prompt: string
   negativePrompt: string
   seed: number

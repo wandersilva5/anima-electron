@@ -3,9 +3,21 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
 import { Sparkles, Shuffle, RefreshCw, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { SafeImage } from './SafeImage'
+import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
+
+const ASPECT_RATIOS = [
+  { label: '1:1', width: 1152, height: 1152 },
+  { label: '2:3', width: 768, height: 1152 },
+  { label: '3:2', width: 1152, height: 768 },
+  { label: '9:16', width: 648, height: 1152 },
+  { label: '16:9', width: 1152, height: 648 },
+] as const
 
 export function PromptPanel() {
   const { params, generating, progress, status, loras, models, refreshLoras } = useSessionStore()
+  const activePreset = ASPECT_RATIOS.find(
+    (ar) => ar.width === params.width && ar.height === params.height
+  )
   const { generate, error } = useGenerator()
   const [modelsOpen, setModelsOpen] = useState(false)
   const [lorasOpen, setLorasOpen] = useState(false)
@@ -13,6 +25,21 @@ export function PromptPanel() {
   const [lorasRefreshed, setLorasRefreshed] = useState(false)
   const [loraSearch, setLoraSearch] = useState('')
   const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  const profile = MODEL_PROFILES[params.diffusionModel]
+
+  const filteredModels = models.filter((model) => {
+    const name = model.name.toLowerCase()
+    if (params.diffusionModel === 'anima') {
+      return name.includes('anima')
+    } else if (params.diffusionModel === 'krea2') {
+      return name.includes('krea') || name.includes('krea2') || name === 'krea2_turbo_fp8_scaled.safetensors'
+    } else if (params.diffusionModel === 'z-image') {
+      return name.includes('z-image') || name.includes('z_image')
+    }
+    return true
+  })
+
   const filteredLoras = loras.filter((lora) =>
     lora.name.toLowerCase().includes(loraSearch.toLowerCase())
   )
@@ -33,6 +60,39 @@ export function PromptPanel() {
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 space-y-4 overflow-y-auto">
+        {/* Seletor de Modelo de Difusão */}
+        <div>
+          <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+            Modelo de Difusão
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {MODEL_IDS.map((id) => {
+              const prof = MODEL_PROFILES[id]
+              const isSelected = params.diffusionModel === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => params.setDiffusionModel(id)}
+                  className={`
+                    flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
+                    ${isSelected
+                      ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
+                      : 'border-border bg-surface hover:border-text-muted text-text-secondary'
+                    }
+                  `}
+                >
+                  <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
+                    {prof.label}
+                  </span>
+                  <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
+                    {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : 'GGUF Flux'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
             Prompt Positivo
@@ -46,18 +106,20 @@ export function PromptPanel() {
           />
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Prompt Negativo
-          </label>
-          <textarea
-            value={params.negativePrompt}
-            onChange={(e) => params.setNegativePrompt(e.target.value)}
-            placeholder="O que evitar na imagem..."
-            rows={3}
-            className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
-          />
-        </div>
+        {profile.hasNegativePrompt && (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              Prompt Negativo
+            </label>
+            <textarea
+              value={params.negativePrompt}
+              onChange={(e) => params.setNegativePrompt(e.target.value)}
+              placeholder="O que evitar na imagem..."
+              rows={3}
+              className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
+            />
+          </div>
+        )}
 
         <div>
           <button
@@ -65,17 +127,17 @@ export function PromptPanel() {
             className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 w-full text-left"
           >
             {modelsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            Modelo de Difusão
+            Arquivo do Checkpoint (UNET)
           </button>
 
           {modelsOpen && (
             <div>
-              {models.length === 0 ? (
-                <p className="text-xs text-text-muted">Nenhum modelo encontrado</p>
+              {filteredModels.length === 0 ? (
+                <p className="text-xs text-text-muted">Nenhum checkpoint correspondente encontrado</p>
               ) : (
                 <div className="max-h-48 overflow-y-auto custom-scroll">
                   <div className="grid grid-cols-3 gap-2">
-                    {models.map((model) => {
+                    {filteredModels.map((model) => {
                       const displayName = model.name.replace(/\.(safetensors|ckpt)$/, '').split(/[/\\]/).pop() ?? model.name
                       const isSelected = params.modelName === model.name
                       return (
@@ -159,6 +221,36 @@ export function PromptPanel() {
             />
 
             <ParamField label="Resolução">
+              <div className="flex flex-wrap gap-1 mb-1.5">
+                {ASPECT_RATIOS.map((ar) => {
+                  const isActive = params.width === ar.width && params.height === ar.height
+                  return (
+                    <button
+                      key={ar.label}
+                      onClick={() => {
+                        params.setWidth(ar.width)
+                        params.setHeight(ar.height)
+                      }}
+                      className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                        isActive
+                          ? 'bg-accent text-white'
+                          : 'bg-surface-tertiary text-text-secondary hover:bg-border'
+                      }`}
+                    >
+                      {ar.label}
+                    </button>
+                  )
+                })}
+                <span
+                  className={`px-2 py-1 rounded-lg text-xs font-medium ${
+                    !activePreset
+                      ? 'bg-accent text-white'
+                      : 'bg-surface-tertiary text-text-muted'
+                  }`}
+                >
+                  Personalizado
+                </span>
+              </div>
               <div className="flex gap-1">
                 <input
                   type="number"
@@ -296,14 +388,16 @@ export function PromptPanel() {
                     step={0.05}
                     onChange={(v) => params.setLora(params.loraName, v, undefined)}
                   />
-                  <SliderField
-                    label="CLIP Strength"
-                    value={params.loraStrengthClip}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(v) => params.setLora(params.loraName, undefined, v)}
-                  />
+                  {profile.hasLoraClipStrength && (
+                    <SliderField
+                      label="CLIP Strength"
+                      value={params.loraStrengthClip}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      onChange={(v) => params.setLora(params.loraName, undefined, v)}
+                    />
+                  )}
                 </div>
               )}
             </div>

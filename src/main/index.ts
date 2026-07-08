@@ -7,6 +7,7 @@ import { WorkflowManager } from './workflow'
 import { LoraScanner } from './loraScanner'
 import { ModelScanner } from './modelScanner'
 import { SettingsManager } from './settings'
+import { MODEL_PROFILES } from '../shared/modelProfiles'
 
 let mainWindow: BrowserWindow | null = null
 let comfyClient: ComfyUIClient
@@ -76,7 +77,7 @@ function setupIPC(): void {
 
   comfyClient = new ComfyUIClient('http://127.0.0.1:8188')
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath)
-  workflowManager = new WorkflowManager(join(__dirname, '../../workflows/anima-simples.json'))
+  workflowManager = new WorkflowManager(join(__dirname, '../../workflows'))
   loraScanner = new LoraScanner(settingsManager)
   modelScanner = new ModelScanner(settingsManager)
 
@@ -143,9 +144,9 @@ function setupIPC(): void {
     return { promptId: response.prompt_id, images: savedImages }
   })
 
-  ipcMain.handle('loras:list', async () => {
-    const loras = loraScanner.scan()
-    console.log(`[Anima] LoRAs encontrados: ${loras.length}`)
+  ipcMain.handle('loras:list', async (_event, subfolder?: string) => {
+    const loras = loraScanner.scan(subfolder)
+    console.log(`[Anima] LoRAs encontrados: ${loras.length} para a subpasta: ${subfolder ?? 'todas'}`)
     if (loras.length > 0) console.log(`[Anima] Primeiro LoRA: ${loras[0].name}, preview: ${loras[0].previewUrl ?? 'nenhum'}`)
     return loras
   })
@@ -196,8 +197,12 @@ function setupIPC(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('app:getWorkflowDefaults', async () => {
-    return workflowManager.getDefaults()
+  ipcMain.handle('app:getWorkflowDefaults', async (_event, diffusionModel?: any) => {
+    return workflowManager.getDefaults(diffusionModel)
+  })
+
+  ipcMain.handle('app:getModelProfiles', async () => {
+    return MODEL_PROFILES
   })
 
   ipcMain.handle('file:readImage', async (_event, filePath: string) => {

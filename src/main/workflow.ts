@@ -1,5 +1,7 @@
 import { readFileSync } from 'fs'
-import type { GenerationParams, WorkflowJSON } from '@shared/types'
+import { join } from 'path'
+import type { GenerationParams, WorkflowJSON, DiffusionModelId } from '@shared/types'
+import { MODEL_PROFILES } from '../shared/modelProfiles'
 
 interface WorkflowDefaults {
   steps: number
@@ -18,26 +20,76 @@ interface WorkflowDefaults {
   modelName: string
 }
 
-export class WorkflowManager {
-  private workflow: WorkflowJSON
-  private defaults: WorkflowDefaults
+interface WorkflowData {
+  workflow: WorkflowJSON
+  positiveNodeId: number | null
+  negativeNodeId: number | null
+  defaults: WorkflowDefaults
+}
 
-  constructor(workflowPath: string) {
-    const raw = readFileSync(workflowPath, 'utf-8')
-    this.workflow = JSON.parse(raw)
-    this.defaults = this.extractDefaults()
+function findOriginNode(workflow: WorkflowJSON, targetNodeId: number, inputName: string): any {
+  const node = workflow.nodes.find(n => n.id === targetNodeId)
+  if (!node || !node.inputs) return undefined
+  const input = node.inputs.find(i => i.name === inputName)
+  if (!input || input.link === null) return undefined
+  const link = workflow.links.find(l => l[0] === input.link)
+  if (!link) return undefined
+  const originNodeId = link[1]
+  return workflow.nodes.find(n => n.id === originNodeId)
+}
+
+export class WorkflowManager {
+  private workflows: Record<string, WorkflowData> = {}
+
+  constructor(workflowsDir: string) {
+    for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
+      try {
+        const filePath = join(workflowsDir, profile.workflowFile)
+        const raw = readFileSync(filePath, 'utf-8')
+        const workflow: WorkflowJSON = JSON.parse(raw)
+
+        let positiveNodeId: number | null = null
+        let negativeNodeId: number | null = null
+
+        const ksampler = workflow.nodes.find(n => n.type === 'KSampler')
+        if (ksampler) {
+          const posNode = findOriginNode(workflow, ksampler.id, 'positive')
+          if (posNode && posNode.type === 'CLIPTextEncode') {
+            positiveNodeId = posNode.id
+          }
+          const negNode = findOriginNode(workflow, ksampler.id, 'negative')
+          if (negNode && negNode.type === 'CLIPTextEncode') {
+            negativeNodeId = negNode.id
+          }
+        }
+
+        const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId)
+
+        this.workflows[modelId] = {
+          workflow,
+          positiveNodeId,
+          negativeNodeId,
+          defaults
+        }
+      } catch (err) {
+        console.error(`[WorkflowManager] Erro ao carregar workflow para ${modelId}:`, err)
+      }
+    }
   }
 
-  private extractDefaults(): WorkflowDefaults {
-    const nodes = this.workflow.nodes
+  private extractDefaults(
+    workflow: WorkflowJSON,
+    positiveNodeId: number | null,
+    negativeNodeId: number | null
+  ): WorkflowDefaults {
+    const nodes = workflow.nodes
 
     const ksampler = nodes.find(n => n.type === 'KSampler')
-    const emptyLatent = nodes.find(n => n.type === 'EmptyLatentImage')
-    const clipTextEncodes = nodes.filter(n => n.type === 'CLIPTextEncode')
-    const positiveEncode = clipTextEncodes[0]
-    const negativeEncode = clipTextEncodes[1]
-    const loraLoader = nodes.find(n => n.type === 'LoraLoader')
-    const unetLoader = nodes.find(n => n.type === 'UNETLoader')
+    const emptyLatent = nodes.find(n => n.type === 'EmptyLatentImage' || n.type === 'EmptySD3LatentImage')
+    const positiveEncode = positiveNodeId !== null ? nodes.find(n => n.id === positiveNodeId) : null
+    const negativeEncode = negativeNodeId !== null ? nodes.find(n => n.id === negativeNodeId) : null
+    const loraLoader = nodes.find(n => n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly')
+    const unetLoader = nodes.find(n => n.type === 'UNETLoader' || n.type === 'UnetLoaderGGUF')
 
     return {
       steps: (ksampler?.widgets_values?.[2] as number) ?? 20,
@@ -52,20 +104,28 @@ export class WorkflowManager {
       negativePrompt: (negativeEncode?.widgets_values?.[0] as string) ?? '',
       loraName: (loraLoader?.widgets_values?.[0] as string) ?? 'None',
       loraStrengthModel: (loraLoader?.widgets_values?.[1] as number) ?? 0.5,
-      loraStrengthClip: (loraLoader?.widgets_values?.[2] as number) ?? 0.5,
-      modelName: (unetLoader?.widgets_values?.[0] as string) ?? 'anima/JANIMA_v10.safetensors'
+      loraStrengthClip: (loraLoader?.type === 'LoraLoader' ? (loraLoader.widgets_values?.[2] as number) : 0.5),
+      modelName: (unetLoader?.widgets_values?.[0] as string) ?? ''
     }
   }
 
-  getDefaults(): WorkflowDefaults {
-    return { ...this.defaults }
+  getDefaults(modelId: DiffusionModelId = 'anima'): WorkflowDefaults {
+    const data = this.workflows[modelId]
+    if (!data) {
+      throw new Error(`Workflow defaults not found for model: ${modelId}`)
+    }
+    return { ...data.defaults }
   }
 
   buildPrompt(params: GenerationParams): Record<string, unknown> {
-    const nodes = structuredClone(this.workflow.nodes)
-    const prompt: Record<string, unknown> = {}
+    const modelId = params.diffusionModel || 'anima'
+    const data = this.workflows[modelId]
+    if (!data) {
+      throw new Error(`Workflow not loaded for model: ${modelId}`)
+    }
 
-    let clipEncodeIndex = 0
+    const nodes = structuredClone(data.workflow.nodes)
+    const prompt: Record<string, unknown> = {}
 
     for (const node of nodes) {
       const widgetValues = [...(node.widgets_values ?? [])]
@@ -78,18 +138,18 @@ export class WorkflowManager {
           widgetValues.splice(1, 1) // remove control_after_generate (não vira input)
           break
         }
-        case 'EmptyLatentImage': {
+        case 'EmptyLatentImage':
+        case 'EmptySD3LatentImage': {
           widgetValues[0] = params.width
           widgetValues[1] = params.height
           break
         }
         case 'CLIPTextEncode': {
-          if (clipEncodeIndex === 0) {
+          if (node.id === data.positiveNodeId) {
             widgetValues[0] = params.prompt
-          } else if (clipEncodeIndex === 1) {
+          } else if (node.id === data.negativeNodeId) {
             widgetValues[0] = params.negativePrompt
           }
-          clipEncodeIndex++
           break
         }
         case 'LoraLoader': {
@@ -102,7 +162,17 @@ export class WorkflowManager {
           widgetValues[2] = params.loraStrengthClip
           break
         }
-        case 'UNETLoader': {
+        case 'LoraLoaderModelOnly': {
+          if (params.loraName) {
+            widgetValues[0] = params.loraName
+          } else {
+            widgetValues[0] = 'None'
+          }
+          widgetValues[1] = params.loraStrengthModel
+          break
+        }
+        case 'UNETLoader':
+        case 'UnetLoaderGGUF': {
           widgetValues[0] = params.modelName
           break
         }
@@ -118,7 +188,7 @@ export class WorkflowManager {
         let widgetIndex = 0
         for (const input of node.inputs) {
           if (input.link !== null) {
-            const link = this.workflow.links.find(l => l[0] === input.link)
+            const link = data.workflow.links.find(l => l[0] === input.link)
             if (link) {
               inputs[input.name] = [String(link[1]), link[2]]
             }

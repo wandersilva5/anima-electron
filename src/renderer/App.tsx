@@ -25,7 +25,7 @@ function ChibiLogo() {
 }
 
 export default function App() {
-  const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setLoras, setModels, loras, models } = useSessionStore()
+  const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setLoras, setModels, loras, models, refreshLoras } = useSessionStore()
   const [initialized, setInitialized] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(() => {
     const stored = localStorage.getItem('anima-history-open')
@@ -35,16 +35,13 @@ export default function App() {
 
   const loadResources = useCallback(async () => {
     try {
-      const [loras, models] = await Promise.all([
-        window.electronAPI.loras.list(),
-        window.electronAPI.models.list()
-      ])
-      setLoras(loras)
-      setModels(models)
+      const modelsList = await window.electronAPI.models.list()
+      setModels(modelsList)
+      await refreshLoras()
     } catch {
       // resources will be empty
     }
-  }, [setLoras, setModels])
+  }, [setModels, refreshLoras])
 
   useEffect(() => {
     const unsubStatus = window.electronAPI.comfyui.onStatusUpdate((data) => {
