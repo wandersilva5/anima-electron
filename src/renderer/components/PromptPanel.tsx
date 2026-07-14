@@ -144,6 +144,7 @@ export function PromptPanel() {
                         <button
                           key={model.name}
                           onClick={() => params.setModel(model.name)}
+                          title={displayName}
                           className={`
                             relative aspect-square rounded-xl border-2 overflow-hidden
                             transition-all
@@ -358,6 +359,7 @@ export function PromptPanel() {
                         <button
                           key={lora.name}
                           onClick={() => params.setLora(lora.name)}
+                          title={displayName}
                           className={`
                             relative aspect-square rounded-xl border-2 overflow-hidden
                             transition-all group
