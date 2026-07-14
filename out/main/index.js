@@ -383,6 +383,10 @@ class WorkflowManager {
           widgetValues[0] = params.modelName;
           break;
         }
+        case "SaveImage": {
+          widgetValues[0] = params.filenamePrefix || "anima";
+          break;
+        }
       }
       const nodeEntry = {
         class_type: node.type,
