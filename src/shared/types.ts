@@ -33,6 +33,7 @@ export interface GenerationParams {
   loraStrengthModel: number
   loraStrengthClip: number
   modelName: string
+  filenamePrefix?: string
 }
 
 export interface GenerationResult {

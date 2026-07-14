@@ -668,12 +668,17 @@ function setupIPC() {
       }
       savedImages = [];
       for (const img of images) {
-        const imgPath = join(historyDir, img.filename);
+        const now = /* @__PURE__ */ new Date();
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+        const prefix = params.filenamePrefix || "anima";
+        const ext = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
+        const newFilename = `${prefix}_${timestamp}.${ext}`;
+        const imgPath = join(historyDir, newFilename);
         writeFileSync(imgPath, Buffer.from(img.data, "base64"));
-        savedImages.push({ ...img, filePath: imgPath });
+        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
         const metadata = {
           params,
-          filename: img.filename,
+          filename: newFilename,
           timestamp: Date.now()
         };
         writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));

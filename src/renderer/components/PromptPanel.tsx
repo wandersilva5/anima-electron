@@ -267,6 +267,18 @@ export function PromptPanel() {
                 />
               </div>
             </ParamField>
+
+            <div className="col-span-2">
+              <ParamField label="Prefixo do Arquivo">
+                <input
+                  type="text"
+                  value={params.filenamePrefix || ''}
+                  onChange={(e) => params.setFilenamePrefix(e.target.value)}
+                  placeholder="Ex: hinata"
+                  className="w-full bg-surface rounded-lg border border-border px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
+                />
+              </ParamField>
+            </div>
           </div>
         </div>
 

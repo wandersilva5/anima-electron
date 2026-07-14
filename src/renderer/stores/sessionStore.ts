@@ -14,6 +14,7 @@ interface GenerationParamsState extends GenerationParams {
   setModel: (name: string) => void
   setDiffusionModel: (id: DiffusionModelId) => void
   randomizeSeed: () => void
+  setFilenamePrefix: (prefix: string) => void
 }
 
 interface GenerationProgress {
@@ -69,7 +70,8 @@ const defaultParams: GenerationParams = {
   loraStrengthClip: 0.5,
   modelName: savedModel === 'z-image' ? 'z-image\\z_image_turbo-Q4_K_M.gguf' :
              savedModel === 'krea2' ? 'krea2_turbo_fp8_scaled.safetensors' :
-             'anima\\JANIMA_v10.safetensors'
+             'anima\\JANIMA_v10.safetensors',
+  filenamePrefix: localStorage.getItem('anima-filename-prefix') || 'anima'
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -169,6 +171,10 @@ export const useSessionStore = create<SessionState>((set) => ({
 
         return { params: nextParams }
       }),
-    randomizeSeed: () => set((s) => ({ params: { ...s.params, seed: Math.floor(Math.random() * 2147483647) } }))
+    randomizeSeed: () => set((s) => ({ params: { ...s.params, seed: Math.floor(Math.random() * 2147483647) } })),
+    setFilenamePrefix: (filenamePrefix) => {
+      localStorage.setItem('anima-filename-prefix', filenamePrefix)
+      set((s) => ({ params: { ...s.params, filenamePrefix } }))
+    }
   }
 }))
