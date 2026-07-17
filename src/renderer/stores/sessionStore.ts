@@ -68,9 +68,7 @@ const defaultParams: GenerationParams = {
   loraName: null,
   loraStrengthModel: 0.5,
   loraStrengthClip: 0.5,
-  modelName: savedModel === 'z-image' ? 'z-image\\z_image_turbo-Q4_K_M.gguf' :
-             savedModel === 'krea2' ? 'krea2_turbo_fp8_scaled.safetensors' :
-             'anima\\JANIMA_v10.safetensors',
+  modelName: '',
   filenamePrefix: localStorage.getItem('anima-filename-prefix') || 'anima'
 }
 
@@ -91,19 +89,33 @@ export const useSessionStore = create<SessionState>((set) => ({
   selectedId: null,
   selectImage: (selectedId) => set({ selectedId }),
   loras: [],
-  setLoras: (loras) => set({ loras }),
+  setLoras: (loras) => set((s) => {
+    if (!s.params.loraName && loras.length > 0) {
+      return { loras, params: { ...s.params, loraName: loras[0].name } }
+    }
+    return { loras }
+  }),
   refreshLoras: async () => {
     const state = useSessionStore.getState()
     const modelId = state.params.diffusionModel
     const prof = MODEL_PROFILES[modelId]
     const loras = await window.electronAPI.loras.list(prof.loraFolder)
-    set({ loras })
+    state.setLoras(loras)
   },
   models: [],
-  setModels: (models) => set({ models }),
+  setModels: (models) => set((s) => {
+    const isGGUF = s.params.diffusionModel === 'z-image'
+    const compatible = models.filter(m => isGGUF ? m.name.endsWith('.gguf') : m.name.endsWith('.safetensors'))
+    const hasCurrent = models.some(m => m.name === s.params.modelName)
+    if (!hasCurrent && compatible.length > 0) {
+      return { models, params: { ...s.params, modelName: compatible[0].name } }
+    }
+    return { models }
+  }),
   refreshModels: async () => {
+    const state = useSessionStore.getState()
     const models = await window.electronAPI.models.list()
-    set({ models })
+    state.setModels(models)
   },
   comfyUrl: 'http://127.0.0.1:8188',
   setComfyUrl: (comfyUrl) => set({ comfyUrl }),
@@ -150,6 +162,13 @@ export const useSessionStore = create<SessionState>((set) => ({
         const savedPrompt = localStorage.getItem(`anima-prompt-${diffusionModel}`) || ''
         const savedNegPrompt = localStorage.getItem(`anima-negative-prompt-${diffusionModel}`) || ''
 
+        const isGGUF = diffusionModel === 'z-image'
+        const compatible = s.models.filter(m => isGGUF ? m.name.endsWith('.gguf') : m.name.endsWith('.safetensors'))
+        const found = compatible.find(m => m.name === s.params.modelName)
+        const modelName = found ? s.params.modelName : (compatible[0]?.name ?? '')
+
+        const firstLora = s.loras.length > 0 ? s.loras[0].name : null
+
         const nextParams = {
           ...s.params,
           diffusionModel,
@@ -159,10 +178,8 @@ export const useSessionStore = create<SessionState>((set) => ({
           cfg: prof.defaults.cfg,
           width: prof.defaults.width,
           height: prof.defaults.height,
-          loraName: null,
-          modelName: diffusionModel === 'z-image' ? 'z-image\\z_image_turbo-Q4_K_M.gguf' :
-                     diffusionModel === 'krea2' ? 'krea2_turbo_fp8_scaled.safetensors' :
-                     'anima\\JANIMA_v10.safetensors'
+          loraName: firstLora,
+          modelName
         }
 
         setTimeout(() => {

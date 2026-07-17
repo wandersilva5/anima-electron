@@ -336,6 +336,7 @@ class WorkflowManager {
     const nodes = structuredClone(data.workflow.nodes);
     const prompt = {};
     for (const node of nodes) {
+      if (node.type === "Note" || node.type === "Reroute") continue;
       const widgetValues = [...node.widgets_values ?? []];
       switch (node.type) {
         case "KSampler": {
@@ -378,13 +379,18 @@ class WorkflowManager {
           widgetValues[1] = params.loraStrengthModel;
           break;
         }
-        case "UNETLoader":
+        case "UNETLoader": {
+          widgetValues[0] = params.modelName || (node.widgets_values?.[0] ?? "");
+          break;
+        }
         case "UnetLoaderGGUF": {
-          widgetValues[0] = params.modelName;
+          widgetValues[0] = params.modelName?.endsWith(".gguf") ? params.modelName : node.widgets_values?.[0] ?? params.modelName;
           break;
         }
         case "SaveImage": {
-          widgetValues[0] = params.filenamePrefix || "anima";
+          const now = /* @__PURE__ */ new Date();
+          const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+          widgetValues[0] = `[${params.filenamePrefix || "anima"}][${ts}]`;
           break;
         }
       }
@@ -496,7 +502,7 @@ class ModelScanner {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
           results.push(...this.scanRecursive(fullPath, type, typeDir, baseDir));
-        } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt")) {
+        } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt") || entry.name.endsWith(".gguf")) {
           const typePath = join(baseDir, typeDir);
           const relative = dir === typePath ? entry.name : join(dir.replace(typePath + sep, ""), entry.name);
           const name = relative;
@@ -673,10 +679,10 @@ function setupIPC() {
       savedImages = [];
       for (const img of images) {
         const now = /* @__PURE__ */ new Date();
-        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
         const prefix = params.filenamePrefix || "anima";
         const ext = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
-        const newFilename = `${prefix}_${timestamp}.${ext}`;
+        const newFilename = `[${prefix}][${timestamp}].${ext}`;
         const imgPath = join(historyDir, newFilename);
         writeFileSync(imgPath, Buffer.from(img.data, "base64"));
         savedImages.push({ ...img, filePath: imgPath, filename: newFilename });

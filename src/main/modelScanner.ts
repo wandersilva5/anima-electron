@@ -41,7 +41,7 @@ export class ModelScanner {
         const fullPath = join(dir, entry.name)
         if (entry.isDirectory()) {
           results.push(...this.scanRecursive(fullPath, type, typeDir, baseDir))
-        } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt')) {
+        } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt') || entry.name.endsWith('.gguf')) {
           const typePath = join(baseDir, typeDir)
           const relative = dir === typePath ? entry.name : join(dir.replace(typePath + sep, ''), entry.name)
           const name = relative

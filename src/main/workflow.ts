@@ -128,6 +128,7 @@ export class WorkflowManager {
     const prompt: Record<string, unknown> = {}
 
     for (const node of nodes) {
+      if (node.type === 'Note' || node.type === 'Reroute') continue
       const widgetValues = [...(node.widgets_values ?? [])]
 
       switch (node.type) {
@@ -171,13 +172,18 @@ export class WorkflowManager {
           widgetValues[1] = params.loraStrengthModel
           break
         }
-        case 'UNETLoader':
+        case 'UNETLoader': {
+          widgetValues[0] = params.modelName || (node.widgets_values?.[0] as string ?? '')
+          break
+        }
         case 'UnetLoaderGGUF': {
-          widgetValues[0] = params.modelName
+          widgetValues[0] = params.modelName?.endsWith('.gguf') ? params.modelName : (node.widgets_values?.[0] as string ?? params.modelName)
           break
         }
         case 'SaveImage': {
-          widgetValues[0] = params.filenamePrefix || 'anima'
+          const now = new Date()
+          const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+          widgetValues[0] = `[${params.filenamePrefix || 'anima'}][${ts}]`
           break
         }
       }
