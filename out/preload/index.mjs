@@ -3,6 +3,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   comfyui: {
     getStatus: () => ipcRenderer.invoke("comfyui:status"),
     generate: (params) => ipcRenderer.invoke("comfyui:generate", params),
+    generateImprove: (params) => ipcRenderer.invoke("comfyui:generateImprove", params),
     setUrl: (url) => ipcRenderer.invoke("comfyui:setUrl", url),
     launch: () => ipcRenderer.invoke("comfyui:launch"),
     onProgress: (callback) => {

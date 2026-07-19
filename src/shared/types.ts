@@ -34,6 +34,8 @@ export interface GenerationParams {
   loraStrengthClip: number
   modelName: string
   filenamePrefix?: string
+  imagePath?: string
+  denoise?: number
 }
 
 export interface GenerationResult {

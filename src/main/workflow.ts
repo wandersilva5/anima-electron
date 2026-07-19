@@ -24,6 +24,9 @@ interface WorkflowData {
   workflow: WorkflowJSON
   positiveNodeId: number | null
   negativeNodeId: number | null
+  vaeNodeId: number | null
+  ksamplerNodeId: number | null
+  emptyLatentNodeId: number | null
   defaults: WorkflowDefaults
 }
 
@@ -50,9 +53,13 @@ export class WorkflowManager {
 
         let positiveNodeId: number | null = null
         let negativeNodeId: number | null = null
+        let vaeNodeId: number | null = null
+        let ksamplerNodeId: number | null = null
+        let emptyLatentNodeId: number | null = null
 
         const ksampler = workflow.nodes.find(n => n.type === 'KSampler')
         if (ksampler) {
+          ksamplerNodeId = ksampler.id
           const posNode = findOriginNode(workflow, ksampler.id, 'positive')
           if (posNode && posNode.type === 'CLIPTextEncode') {
             positiveNodeId = posNode.id
@@ -63,12 +70,30 @@ export class WorkflowManager {
           }
         }
 
+        const vaeDecode = workflow.nodes.find(n => n.type === 'VAEDecode')
+        if (vaeDecode) {
+          const vaeSrc = findOriginNode(workflow, vaeDecode.id, 'vae')
+          if (vaeSrc) {
+            vaeNodeId = vaeSrc.id
+          }
+        }
+
+        const emptyLatent = workflow.nodes.find(
+          n => n.type === 'EmptyLatentImage' || n.type === 'EmptySD3LatentImage'
+        )
+        if (emptyLatent) {
+          emptyLatentNodeId = emptyLatent.id
+        }
+
         const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId)
 
         this.workflows[modelId] = {
           workflow,
           positiveNodeId,
           negativeNodeId,
+          vaeNodeId,
+          ksamplerNodeId,
+          emptyLatentNodeId,
           defaults
         }
       } catch (err) {
@@ -127,6 +152,8 @@ export class WorkflowManager {
     const nodes = structuredClone(data.workflow.nodes)
     const prompt: Record<string, unknown> = {}
 
+    const isImg2Img = !!params.imagePath
+
     for (const node of nodes) {
       if (node.type === 'Note' || node.type === 'Reroute') continue
       const widgetValues = [...(node.widgets_values ?? [])]
@@ -137,12 +164,17 @@ export class WorkflowManager {
           widgetValues[2] = params.steps
           widgetValues[3] = params.cfg
           widgetValues.splice(1, 1) // remove control_after_generate (não vira input)
+          if (isImg2Img && params.denoise !== undefined) {
+            widgetValues[widgetValues.length - 1] = params.denoise
+          }
           break
         }
         case 'EmptyLatentImage':
         case 'EmptySD3LatentImage': {
-          widgetValues[0] = params.width
-          widgetValues[1] = params.height
+          if (!isImg2Img) {
+            widgetValues[0] = params.width
+            widgetValues[1] = params.height
+          }
           break
         }
         case 'CLIPTextEncode': {
@@ -213,6 +245,36 @@ export class WorkflowManager {
 
       nodeEntry.inputs = inputs
       prompt[String(node.id)] = nodeEntry
+    }
+
+    if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
+      const loadImageId = 99990
+      const vaeEncodeId = 99991
+
+      prompt[String(loadImageId)] = {
+        class_type: 'LoadImage',
+        _meta: { title: 'LoadImage (img2img)' },
+        inputs: {
+          image: params.imagePath
+        }
+      }
+
+      prompt[String(vaeEncodeId)] = {
+        class_type: 'VAEEncode',
+        _meta: { title: 'VAEEncode (img2img)' },
+        inputs: {
+          pixels: [String(loadImageId), 0],
+          vae: [String(data.vaeNodeId), 0]
+        }
+      }
+
+      const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
+      if (ksamplerEntry) {
+        const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+        if (kInputs) {
+          kInputs.latent_image = [String(vaeEncodeId), 0]
+        }
+      }
     }
 
     return prompt

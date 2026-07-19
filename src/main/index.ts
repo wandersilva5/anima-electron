@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join } from 'path'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
+import { join, extname } from 'path'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync, copyFileSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
 import { WorkflowManager } from './workflow'
@@ -144,6 +144,91 @@ function setupIPC(): void {
       console.log(`[Anima] Imagens salvas em: ${historyDir}`)
     } catch (err) {
       console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err)
+    }
+
+    return { promptId: response.prompt_id, images: savedImages }
+  })
+
+  ipcMain.handle('comfyui:generateImprove', async (_event, params) => {
+    console.log('[Anima] Iniciando melhoria de imagem (img2img)...')
+    console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
+
+    if (!params.imagePath) {
+      throw new Error('Caminho da imagem não fornecido')
+    }
+
+    const settings = settingsManager.get()
+    const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+    const ext = extname(params.imagePath) || '.png'
+    const inputFilename = `anima-improve-${Date.now()}${ext}`
+    const destPath = join(comfyInputDir, inputFilename)
+
+    try {
+      copyFileSync(params.imagePath, destPath)
+      console.log(`[Anima] Imagem copiada para: ${destPath}`)
+    } catch {
+      console.warn('[Anima] Não foi possível copiar para input do ComfyUI, tentando upload via API...')
+      const imageData = readFileSync(params.imagePath)
+      const formData = new FormData()
+      const blob = new Blob([imageData], { type: `image/${ext.replace('.', '')}` })
+      formData.append('image', blob, inputFilename)
+      formData.append('type', 'input')
+      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: 'POST', body: formData })
+      if (!uploadRes.ok) {
+        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`)
+      }
+      console.log('[Anima] Upload da imagem realizado com sucesso')
+    }
+
+    const improveParams = {
+      ...params,
+      imagePath: inputFilename,
+      filenamePrefix: params.filenamePrefix || 'anima-improve'
+    }
+    const prompt = workflowManager.buildPrompt(improveParams)
+    console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
+    const response = await comfyClient.sendPrompt(prompt)
+    console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
+    if (Object.keys(response.node_errors ?? {}).length > 0) {
+      console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
+      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+    }
+    const images = await comfyClient.waitForResult(
+      response.prompt_id,
+      (current, max) => {
+        mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+      }
+    )
+    console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
+
+    const historyBaseDir = join(app.getPath('userData'), 'history')
+    const historyDir = join(historyBaseDir, response.prompt_id)
+    let savedImages = images.map((img) => ({ ...img, filePath: '' }))
+
+    try {
+      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true })
+      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true })
+
+      savedImages = []
+      for (const img of images) {
+        const now = new Date()
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+        const prefix = params.filenamePrefix || 'anima-improve'
+        const ext2 = img.filename.endsWith('.png') ? 'png' : img.filename.endsWith('.jpg') || img.filename.endsWith('.jpeg') ? 'jpg' : 'png'
+        const newFilename = `[${prefix}][${timestamp}].${ext2}`
+        const imgPath = join(historyDir, newFilename)
+        writeFileSync(imgPath, Buffer.from(img.data, 'base64'))
+        savedImages.push({ ...img, filePath: imgPath, filename: newFilename })
+
+        const metadata = {
+          params: improveParams,
+          filename: newFilename,
+          timestamp: Date.now()
+        }
+        writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
+      }
+    } catch (err) {
+      console.warn('[Anima] Erro ao salvar histórico:', err)
     }
 
     return { promptId: response.prompt_id, images: savedImages }

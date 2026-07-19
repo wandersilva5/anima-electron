@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join, sep } from "path";
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync, rmSync } from "fs";
+import { join, sep, extname } from "path";
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, copyFileSync, statSync, rmSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
@@ -272,8 +272,12 @@ class WorkflowManager {
         const workflow = JSON.parse(raw);
         let positiveNodeId = null;
         let negativeNodeId = null;
+        let vaeNodeId = null;
+        let ksamplerNodeId = null;
+        let emptyLatentNodeId = null;
         const ksampler = workflow.nodes.find((n) => n.type === "KSampler");
         if (ksampler) {
+          ksamplerNodeId = ksampler.id;
           const posNode = findOriginNode(workflow, ksampler.id, "positive");
           if (posNode && posNode.type === "CLIPTextEncode") {
             positiveNodeId = posNode.id;
@@ -283,11 +287,27 @@ class WorkflowManager {
             negativeNodeId = negNode.id;
           }
         }
+        const vaeDecode = workflow.nodes.find((n) => n.type === "VAEDecode");
+        if (vaeDecode) {
+          const vaeSrc = findOriginNode(workflow, vaeDecode.id, "vae");
+          if (vaeSrc) {
+            vaeNodeId = vaeSrc.id;
+          }
+        }
+        const emptyLatent = workflow.nodes.find(
+          (n) => n.type === "EmptyLatentImage" || n.type === "EmptySD3LatentImage"
+        );
+        if (emptyLatent) {
+          emptyLatentNodeId = emptyLatent.id;
+        }
         const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId);
         this.workflows[modelId] = {
           workflow,
           positiveNodeId,
           negativeNodeId,
+          vaeNodeId,
+          ksamplerNodeId,
+          emptyLatentNodeId,
           defaults
         };
       } catch (err) {
@@ -335,6 +355,7 @@ class WorkflowManager {
     }
     const nodes = structuredClone(data.workflow.nodes);
     const prompt = {};
+    const isImg2Img = !!params.imagePath;
     for (const node of nodes) {
       if (node.type === "Note" || node.type === "Reroute") continue;
       const widgetValues = [...node.widgets_values ?? []];
@@ -344,12 +365,17 @@ class WorkflowManager {
           widgetValues[2] = params.steps;
           widgetValues[3] = params.cfg;
           widgetValues.splice(1, 1);
+          if (isImg2Img && params.denoise !== void 0) {
+            widgetValues[widgetValues.length - 1] = params.denoise;
+          }
           break;
         }
         case "EmptyLatentImage":
         case "EmptySD3LatentImage": {
-          widgetValues[0] = params.width;
-          widgetValues[1] = params.height;
+          if (!isImg2Img) {
+            widgetValues[0] = params.width;
+            widgetValues[1] = params.height;
+          }
           break;
         }
         case "CLIPTextEncode": {
@@ -417,6 +443,32 @@ class WorkflowManager {
       }
       nodeEntry.inputs = inputs;
       prompt[String(node.id)] = nodeEntry;
+    }
+    if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
+      const loadImageId = 99990;
+      const vaeEncodeId = 99991;
+      prompt[String(loadImageId)] = {
+        class_type: "LoadImage",
+        _meta: { title: "LoadImage (img2img)" },
+        inputs: {
+          image: params.imagePath
+        }
+      };
+      prompt[String(vaeEncodeId)] = {
+        class_type: "VAEEncode",
+        _meta: { title: "VAEEncode (img2img)" },
+        inputs: {
+          pixels: [String(loadImageId), 0],
+          vae: [String(data.vaeNodeId), 0]
+        }
+      };
+      const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
+      if (ksamplerEntry) {
+        const kInputs = ksamplerEntry.inputs;
+        if (kInputs) {
+          kInputs.latent_image = [String(vaeEncodeId), 0];
+        }
+      }
     }
     return prompt;
   }
@@ -696,6 +748,81 @@ function setupIPC() {
       console.log(`[Anima] Imagens salvas em: ${historyDir}`);
     } catch (err) {
       console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
+    }
+    return { promptId: response.prompt_id, images: savedImages };
+  });
+  ipcMain.handle("comfyui:generateImprove", async (_event, params) => {
+    console.log("[Anima] Iniciando melhoria de imagem (img2img)...");
+    console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
+    if (!params.imagePath) {
+      throw new Error("Caminho da imagem não fornecido");
+    }
+    const settings2 = settingsManager.get();
+    const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const ext = extname(params.imagePath) || ".png";
+    const inputFilename = `anima-improve-${Date.now()}${ext}`;
+    const destPath = join(comfyInputDir, inputFilename);
+    try {
+      copyFileSync(params.imagePath, destPath);
+      console.log(`[Anima] Imagem copiada para: ${destPath}`);
+    } catch {
+      console.warn("[Anima] Não foi possível copiar para input do ComfyUI, tentando upload via API...");
+      const imageData = readFileSync(params.imagePath);
+      const formData = new FormData();
+      const blob = new Blob([imageData], { type: `image/${ext.replace(".", "")}` });
+      formData.append("image", blob, inputFilename);
+      formData.append("type", "input");
+      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: formData });
+      if (!uploadRes.ok) {
+        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`);
+      }
+      console.log("[Anima] Upload da imagem realizado com sucesso");
+    }
+    const improveParams = {
+      ...params,
+      imagePath: inputFilename,
+      filenamePrefix: params.filenamePrefix || "anima-improve"
+    };
+    const prompt = workflowManager.buildPrompt(improveParams);
+    console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
+    const response = await comfyClient.sendPrompt(prompt);
+    console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
+    if (Object.keys(response.node_errors ?? {}).length > 0) {
+      console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
+      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
+    }
+    const images = await comfyClient.waitForResult(
+      response.prompt_id,
+      (current, max) => {
+        mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+      }
+    );
+    console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
+    const historyBaseDir = join(app.getPath("userData"), "history");
+    const historyDir = join(historyBaseDir, response.prompt_id);
+    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
+    try {
+      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true });
+      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true });
+      savedImages = [];
+      for (const img of images) {
+        const now = /* @__PURE__ */ new Date();
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+        const prefix = params.filenamePrefix || "anima-improve";
+        const ext2 = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
+        const newFilename = `[${prefix}][${timestamp}].${ext2}`;
+        const imgPath = join(historyDir, newFilename);
+        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
+        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
+        const metadata = {
+          params: improveParams,
+          filename: newFilename,
+          timestamp: Date.now()
+        };
+        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
+      }
+    } catch (err) {
+      console.warn("[Anima] Erro ao salvar histórico:", err);
     }
     return { promptId: response.prompt_id, images: savedImages };
   });

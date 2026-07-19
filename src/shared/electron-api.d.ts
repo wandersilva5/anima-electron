@@ -21,6 +21,7 @@ interface ElectronAPI {
   comfyui: {
     getStatus: () => Promise<ComfyUIStatus>
     generate: (params: unknown) => Promise<GenerateResult>
+    generateImprove: (params: unknown) => Promise<GenerateResult>
     setUrl: (url: string) => Promise<void>
     launch: () => Promise<{ success: boolean; message: string }>
     onProgress: (callback: (data: { current: number; max: number }) => void) => () => void
