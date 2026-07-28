@@ -1,6 +1,25 @@
 import { WebSocket } from 'ws'
 import type { ComfyUIStatus, ComfyUIPromptResponse, ComfyUIHistoryItem } from '@shared/types'
 
+function extractAnyString(obj: unknown, depth = 0): string | null {
+  if (depth > 5) return null
+  if (typeof obj === 'string' && obj.trim()) return obj.trim()
+  if (typeof obj === 'number') return String(obj)
+  if (typeof obj !== 'object' || obj === null) return null
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = extractAnyString(item, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+  for (const val of Object.values(obj as Record<string, unknown>)) {
+    const found = extractAnyString(val, depth + 1)
+    if (found) return found
+  }
+  return null
+}
+
 export class ComfyUIClient {
   private baseUrl: string
 
@@ -97,6 +116,139 @@ export class ComfyUIClient {
     } finally {
       ws?.close()
     }
+  }
+
+  async captionImage(
+    inputFilename: string
+  ): Promise<{ text: string }> {
+    // Fetch ALL available node types from ComfyUI
+    let allNodesInfo: Record<string, any> = {}
+    try {
+      const infoRes = await fetch(`${this.baseUrl}/object_info`)
+      if (infoRes.ok) {
+        allNodesInfo = await infoRes.json()
+        const types = Object.keys(allNodesInfo)
+        console.log(`[ComfyUIClient] Total de nós disponíveis: ${types.length}`)
+      }
+    } catch (err) {
+      console.warn('[ComfyUIClient] Falha ao buscar nós disponíveis:', err)
+      return { text: '' }
+    }
+
+    const allNodeTypes = Object.keys(allNodesInfo)
+
+    // Filter actual captioning nodes using their input structure from object_info
+    const knownCaptioningPrefixes = ['wdtagger', 'wd14tagger', 'florence2', 'joycaption', 'joy_caption']
+    const captionNodeKeywords = ['tagger', 'florence', 'joycaption', 'joy_caption']
+    const excludeKeywords = ['switcher', 'merger', 'merge', 'combine', 'split', 'replace',
+      'manager', 'filter', 'sort', 'edit', 'selector', 'picker', 'switch']
+
+    const possibleCaptionNodes: { nodeType: string; inputs: Record<string, unknown> }[] = []
+    for (const name of allNodeTypes) {
+      const lower = name.toLowerCase()
+      const isCaptionNode = knownCaptioningPrefixes.some(p => lower.startsWith(p) || lower.includes(p)) ||
+        (captionNodeKeywords.some(kw => lower.includes(kw)) &&
+         !excludeKeywords.some(kw => lower.includes(kw)))
+      if (!isCaptionNode) continue
+
+      // Build the node inputs using the object_info structure
+      const nodeInfo = allNodesInfo[name]
+      if (!nodeInfo) continue
+      const required = nodeInfo?.input?.required as Record<string, any> | undefined
+      const captionInputs: Record<string, unknown> = {}
+      let hasImageInput = false
+
+      if (required) {
+        for (const [inputName, inputDef] of Object.entries(required)) {
+          const def = Array.isArray(inputDef) ? inputDef : [inputDef]
+          const typeOrOptions = def[0]
+          const config = (def[1] || {}) as Record<string, any>
+
+          // Determine if this is an image link or a widget value
+          if (typeOrOptions === 'IMAGE' || typeOrOptions === 'MASK') {
+            captionInputs[inputName] = ['1', 0]
+            hasImageInput = true
+          } else if (typeOrOptions === 'LATENT' || typeOrOptions === 'MODEL' ||
+                     typeOrOptions === 'CLIP' || typeOrOptions === 'VAE') {
+            // Skip non-image complex inputs that can't be auto-provided
+            continue
+          } else if (Array.isArray(typeOrOptions)) {
+            // COMBO type: use the default or first option
+            captionInputs[inputName] = config?.default ?? typeOrOptions[0] ?? ''
+          } else if (typeOrOptions === 'FLOAT') {
+            captionInputs[inputName] = config?.default ?? 0.5
+          } else if (typeOrOptions === 'INT') {
+            captionInputs[inputName] = config?.default ?? 1
+          } else if (typeOrOptions === 'BOOLEAN') {
+            captionInputs[inputName] = config?.default ?? false
+          } else if (typeOrOptions === 'STRING') {
+            captionInputs[inputName] = config?.default ?? (config?.multiline ? '' : '')
+          }
+        }
+      }
+
+      if (!hasImageInput) continue
+
+      possibleCaptionNodes.push({ nodeType: name, inputs: captionInputs })
+    }
+
+    console.log('[ComfyUIClient] Nós de captioning encontrados:', possibleCaptionNodes.map(n => `${n.nodeType} (${JSON.stringify(n.inputs).slice(0, 120)})`))
+
+    if (possibleCaptionNodes.length === 0) {
+      console.warn('[ComfyUIClient] Nenhum nó de captioning instalado')
+      console.warn('[ComfyUIClient] Instale WD14Tagger, Florence2 ou JoyCaption no ComfyUI Manager')
+      return { text: '' }
+    }
+
+    // Try each available captioning node
+    for (const { nodeType, inputs: captionInputs } of possibleCaptionNodes) {
+      console.log(`[ComfyUIClient] Tentando nó: ${nodeType}`)
+      try {
+        const prompt: Record<string, unknown> = {
+          '1': {
+            class_type: 'LoadImage',
+            _meta: { title: 'LoadImage' },
+            inputs: { image: inputFilename }
+          },
+          '2': {
+            class_type: nodeType,
+            _meta: { title: nodeType },
+            inputs: captionInputs
+          }
+        }
+
+        const response = await this.sendPrompt(prompt)
+        const promptId = response.prompt_id
+        await this.waitForResult(promptId)
+
+        // Extract text from node outputs
+        const historyRes = await fetch(`${this.baseUrl}/history/${promptId}`)
+        if (historyRes.ok) {
+          const data: Record<string, any> = await historyRes.json()
+          const item = data[promptId]
+          if (item?.outputs) {
+            for (const nodeId of Object.keys(item.outputs)) {
+              const output = item.outputs[nodeId]
+              // Skip the LoadImage output (node 1), only look at tagger output
+              if (nodeId === '1') continue
+              console.log(`[ComfyUIClient] Output do nó ${nodeId}:`, JSON.stringify(output).slice(0, 300))
+              // Recursively find any string value in the output
+              const found = extractAnyString(output)
+              if (found) {
+                console.log(`[ComfyUIClient] Caption extraído do nó ${nodeType}: ${found.slice(0, 200)}`)
+                return { text: found }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err)
+        continue
+      }
+    }
+
+    console.warn('[ComfyUIClient] Nenhum nó de captioning produziu resultado')
+    return { text: '' }
   }
 
   private connectProgress(promptId: string, onProgress: (current: number, max: number) => void): WebSocket {

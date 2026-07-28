@@ -7,7 +7,9 @@ import { PromptPanel } from './components/PromptPanel'
 import { StatusBar } from './components/StatusBar'
 import { SettingsModal } from './components/SettingsModal'
 import { ImageImprove } from './components/ImageImprove'
-import { Sun, Moon, Settings, PanelLeftClose, PanelLeftOpen, Sparkles, Wand2 } from 'lucide-react'
+import { PoseStudio } from './components/PoseStudio'
+import { RecreateTab } from './components/RecreateTab'
+import { Sun, Moon, Settings, PanelLeftClose, PanelLeftOpen, Sparkles, Wand2, PersonStanding, RotateCcw } from 'lucide-react'
 
 function ChibiLogo() {
   return (
@@ -28,8 +30,8 @@ function ChibiLogo() {
 export default function App() {
   const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setModels, loras, models, refreshLoras } = useSessionStore()
   const [initialized, setInitialized] = useState(false)
-  const [activeTab, setActiveTab] = useState<'generate' | 'improve'>(() => {
-    return (localStorage.getItem('anima-active-tab') as 'generate' | 'improve') || 'generate'
+  const [activeTab, setActiveTab] = useState<'generate' | 'improve' | 'pose' | 'recreate'>(() => {
+    return (localStorage.getItem('anima-active-tab') as 'generate' | 'improve' | 'pose' | 'recreate') || 'generate'
   })
   const [historyOpen, setHistoryOpen] = useState(() => {
     const stored = localStorage.getItem('anima-history-open')
@@ -149,6 +151,28 @@ export default function App() {
             <Wand2 size={14} />
             Melhorar
           </button>
+          <button
+            onClick={() => { setActiveTab('pose'); localStorage.setItem('anima-active-tab', 'pose') }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              activeTab === 'pose'
+                ? 'bg-accent/20 text-accent'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-tertiary'
+            }`}
+          >
+            <PersonStanding size={14} />
+            Pose
+          </button>
+          <button
+            onClick={() => { setActiveTab('recreate'); localStorage.setItem('anima-active-tab', 'recreate') }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              activeTab === 'recreate'
+                ? 'bg-accent/20 text-accent'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-tertiary'
+            }`}
+          >
+            <RotateCcw size={14} />
+            Recriar
+          </button>
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
@@ -196,8 +220,12 @@ export default function App() {
             <PromptPanel />
           </aside>
         </div>
-      ) : (
+      ) : activeTab === 'improve' ? (
         <ImageImprove />
+      ) : activeTab === 'recreate' ? (
+        <RecreateTab />
+      ) : (
+        <PoseStudio />
       )}
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />

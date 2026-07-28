@@ -1,12 +1,30 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join, sep, extname } from "path";
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, copyFileSync, statSync, rmSync } from "fs";
+import { join, sep } from "path";
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync, rmSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
+function extractAnyString(obj, depth = 0) {
+  if (depth > 5) return null;
+  if (typeof obj === "string" && obj.trim()) return obj.trim();
+  if (typeof obj === "number") return String(obj);
+  if (typeof obj !== "object" || obj === null) return null;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = extractAnyString(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const val of Object.values(obj)) {
+    const found = extractAnyString(val, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
 class ComfyUIClient {
   constructor(baseUrl) {
     this.baseUrl = baseUrl;
@@ -95,6 +113,122 @@ class ComfyUIClient {
     } finally {
       ws?.close();
     }
+  }
+  async captionImage(inputFilename) {
+    let allNodesInfo = {};
+    try {
+      const infoRes = await fetch(`${this.baseUrl}/object_info`);
+      if (infoRes.ok) {
+        allNodesInfo = await infoRes.json();
+        const types = Object.keys(allNodesInfo);
+        console.log(`[ComfyUIClient] Total de nós disponíveis: ${types.length}`);
+      }
+    } catch (err) {
+      console.warn("[ComfyUIClient] Falha ao buscar nós disponíveis:", err);
+      return { text: "" };
+    }
+    const allNodeTypes = Object.keys(allNodesInfo);
+    const knownCaptioningPrefixes = ["wdtagger", "wd14tagger", "florence2", "joycaption", "joy_caption"];
+    const captionNodeKeywords = ["tagger", "florence", "joycaption", "joy_caption"];
+    const excludeKeywords = [
+      "switcher",
+      "merger",
+      "merge",
+      "combine",
+      "split",
+      "replace",
+      "manager",
+      "filter",
+      "sort",
+      "edit",
+      "selector",
+      "picker",
+      "switch"
+    ];
+    const possibleCaptionNodes = [];
+    for (const name of allNodeTypes) {
+      const lower = name.toLowerCase();
+      const isCaptionNode = knownCaptioningPrefixes.some((p) => lower.startsWith(p) || lower.includes(p)) || captionNodeKeywords.some((kw) => lower.includes(kw)) && !excludeKeywords.some((kw) => lower.includes(kw));
+      if (!isCaptionNode) continue;
+      const nodeInfo = allNodesInfo[name];
+      if (!nodeInfo) continue;
+      const required = nodeInfo?.input?.required;
+      const captionInputs = {};
+      let hasImageInput = false;
+      if (required) {
+        for (const [inputName, inputDef] of Object.entries(required)) {
+          const def = Array.isArray(inputDef) ? inputDef : [inputDef];
+          const typeOrOptions = def[0];
+          const config = def[1] || {};
+          if (typeOrOptions === "IMAGE" || typeOrOptions === "MASK") {
+            captionInputs[inputName] = ["1", 0];
+            hasImageInput = true;
+          } else if (typeOrOptions === "LATENT" || typeOrOptions === "MODEL" || typeOrOptions === "CLIP" || typeOrOptions === "VAE") {
+            continue;
+          } else if (Array.isArray(typeOrOptions)) {
+            captionInputs[inputName] = config?.default ?? typeOrOptions[0] ?? "";
+          } else if (typeOrOptions === "FLOAT") {
+            captionInputs[inputName] = config?.default ?? 0.5;
+          } else if (typeOrOptions === "INT") {
+            captionInputs[inputName] = config?.default ?? 1;
+          } else if (typeOrOptions === "BOOLEAN") {
+            captionInputs[inputName] = config?.default ?? false;
+          } else if (typeOrOptions === "STRING") {
+            captionInputs[inputName] = config?.default ?? (config?.multiline ? "" : "");
+          }
+        }
+      }
+      if (!hasImageInput) continue;
+      possibleCaptionNodes.push({ nodeType: name, inputs: captionInputs });
+    }
+    console.log("[ComfyUIClient] Nós de captioning encontrados:", possibleCaptionNodes.map((n) => `${n.nodeType} (${JSON.stringify(n.inputs).slice(0, 120)})`));
+    if (possibleCaptionNodes.length === 0) {
+      console.warn("[ComfyUIClient] Nenhum nó de captioning instalado");
+      console.warn("[ComfyUIClient] Instale WD14Tagger, Florence2 ou JoyCaption no ComfyUI Manager");
+      return { text: "" };
+    }
+    for (const { nodeType, inputs: captionInputs } of possibleCaptionNodes) {
+      console.log(`[ComfyUIClient] Tentando nó: ${nodeType}`);
+      try {
+        const prompt = {
+          "1": {
+            class_type: "LoadImage",
+            _meta: { title: "LoadImage" },
+            inputs: { image: inputFilename }
+          },
+          "2": {
+            class_type: nodeType,
+            _meta: { title: nodeType },
+            inputs: captionInputs
+          }
+        };
+        const response = await this.sendPrompt(prompt);
+        const promptId = response.prompt_id;
+        await this.waitForResult(promptId);
+        const historyRes = await fetch(`${this.baseUrl}/history/${promptId}`);
+        if (historyRes.ok) {
+          const data = await historyRes.json();
+          const item = data[promptId];
+          if (item?.outputs) {
+            for (const nodeId of Object.keys(item.outputs)) {
+              const output = item.outputs[nodeId];
+              if (nodeId === "1") continue;
+              console.log(`[ComfyUIClient] Output do nó ${nodeId}:`, JSON.stringify(output).slice(0, 300));
+              const found = extractAnyString(output);
+              if (found) {
+                console.log(`[ComfyUIClient] Caption extraído do nó ${nodeType}: ${found.slice(0, 200)}`);
+                return { text: found };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err);
+        continue;
+      }
+    }
+    console.warn("[ComfyUIClient] Nenhum nó de captioning produziu resultado");
+    return { text: "" };
   }
   connectProgress(promptId, onProgress) {
     const wsUrl = this.baseUrl.replace(/^http/, "ws") + "/ws";
@@ -355,9 +489,18 @@ class WorkflowManager {
     }
     const nodes = structuredClone(data.workflow.nodes);
     const prompt = {};
+    const skipNodeIds = /* @__PURE__ */ new Set();
     const isImg2Img = !!params.imagePath;
+    const hasLora = !!params.loraName;
+    if (!hasLora) {
+      const loraNode = nodes.find((n) => n.type === "LoraLoader" || n.type === "LoraLoaderModelOnly");
+      if (loraNode) {
+        skipNodeIds.add(loraNode.id);
+      }
+    }
     for (const node of nodes) {
       if (node.type === "Note" || node.type === "Reroute") continue;
+      if (skipNodeIds.has(node.id)) continue;
       const widgetValues = [...node.widgets_values ?? []];
       switch (node.type) {
         case "KSampler": {
@@ -429,9 +572,24 @@ class WorkflowManager {
         let widgetIndex = 0;
         for (const input of node.inputs) {
           if (input.link !== null) {
-            const link = data.workflow.links.find((l) => l[0] === input.link);
+            const link = data.workflow.links.find((l) => l && l[0] === input.link);
             if (link) {
-              inputs[input.name] = [String(link[1]), link[2]];
+              const fromNodeId = link[1];
+              const fromSlot = link[2];
+              if (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
+                const skippedNode = nodes.find((n) => n.id === fromNodeId);
+                const inputName = fromSlot === 0 ? "model" : "clip";
+                const skippedInput = skippedNode?.inputs?.find((i) => i.name === inputName);
+                const skippedLink = skippedInput?.link;
+                if (skippedLink !== null && skippedLink !== void 0) {
+                  const sourceLink = data.workflow.links.find((l) => l && l[0] === skippedLink);
+                  if (sourceLink) {
+                    inputs[input.name] = [String(sourceLink[1]), sourceLink[2]];
+                  }
+                }
+              } else {
+                inputs[input.name] = [String(fromNodeId), fromSlot];
+              }
             }
           } else {
             if (widgetIndex < widgetValues.length) {
@@ -443,6 +601,19 @@ class WorkflowManager {
       }
       nodeEntry.inputs = inputs;
       prompt[String(node.id)] = nodeEntry;
+    }
+    if (params.poseData) {
+      const poseNode = nodes.find((n) => n.type === "VNCCS_PoseGenerator");
+      if (poseNode) {
+        const poseEntry = prompt[String(poseNode.id)];
+        if (poseEntry) {
+          const inputs = poseEntry.inputs;
+          inputs["pose_data"] = params.poseData;
+          inputs["line_thickness"] = params.lineThickness ?? 3;
+          inputs["safe_zone"] = params.safeZone ?? 100;
+          console.log("[Anima] Pose data injected into VNCCS_PoseGenerator");
+        }
+      }
     }
     if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
       const loadImageId = 99990;
@@ -462,11 +633,39 @@ class WorkflowManager {
           vae: [String(data.vaeNodeId), 0]
         }
       };
-      const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
-      if (ksamplerEntry) {
-        const kInputs = ksamplerEntry.inputs;
-        if (kInputs) {
-          kInputs.latent_image = [String(vaeEncodeId), 0];
+      const hasMask = !!params.maskBase64;
+      if (hasMask) {
+        const setMaskId = 99992;
+        const loadMaskId = 99993;
+        prompt[String(loadMaskId)] = {
+          class_type: "LoadImage",
+          _meta: { title: "LoadImage (mask)" },
+          inputs: {
+            image: params.maskFilename || "mask.png"
+          }
+        };
+        prompt[String(setMaskId)] = {
+          class_type: "SetLatentNoiseMask",
+          _meta: { title: "SetLatentNoiseMask (inpaint)" },
+          inputs: {
+            samples: [String(vaeEncodeId), 0],
+            mask: [String(loadMaskId), 1]
+          }
+        };
+        const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
+        if (ksamplerEntry) {
+          const kInputs = ksamplerEntry.inputs;
+          if (kInputs) {
+            kInputs.latent_image = [String(setMaskId), 0];
+          }
+        }
+      } else {
+        const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
+        if (ksamplerEntry) {
+          const kInputs = ksamplerEntry.inputs;
+          if (kInputs) {
+            kInputs.latent_image = [String(vaeEncodeId), 0];
+          }
         }
       }
     }
@@ -754,22 +953,28 @@ function setupIPC() {
   ipcMain.handle("comfyui:generateImprove", async (_event, params) => {
     console.log("[Anima] Iniciando melhoria de imagem (img2img)...");
     console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
-    if (!params.imagePath) {
-      throw new Error("Caminho da imagem não fornecido");
+    if (!params.imageBase64) {
+      throw new Error("Imagem não fornecida");
     }
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
-    const ext = extname(params.imagePath) || ".png";
-    const inputFilename = `anima-improve-${Date.now()}${ext}`;
+    const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/);
+    const imgExt = imageMatch ? imageMatch[1] : "png";
+    const inputFilename = `anima-improve-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
+    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const imageBuffer = Buffer.from(imageData, "base64");
     const destPath = join(comfyInputDir, inputFilename);
+    let savedLocally = false;
     try {
-      copyFileSync(params.imagePath, destPath);
-      console.log(`[Anima] Imagem copiada para: ${destPath}`);
+      writeFileSync(destPath, imageBuffer);
+      console.log(`[Anima] Imagem salva em: ${destPath}`);
+      savedLocally = true;
     } catch {
-      console.warn("[Anima] Não foi possível copiar para input do ComfyUI, tentando upload via API...");
-      const imageData = readFileSync(params.imagePath);
+      console.warn("[Anima] Não foi possível salvar localmente, tentando upload via API...");
+    }
+    if (!savedLocally) {
+      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` });
       const formData = new FormData();
-      const blob = new Blob([imageData], { type: `image/${ext.replace(".", "")}` });
       formData.append("image", blob, inputFilename);
       formData.append("type", "input");
       const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: formData });
@@ -778,10 +983,33 @@ function setupIPC() {
       }
       console.log("[Anima] Upload da imagem realizado com sucesso");
     }
+    let maskFilename;
+    if (params.maskBase64) {
+      maskFilename = `anima-mask-${Date.now()}.png`;
+      const maskData = params.maskBase64.replace(/^data:image\/\w+;base64,/, "");
+      const maskBuffer = Buffer.from(maskData, "base64");
+      const maskDestPath = join(comfyInputDir, maskFilename);
+      try {
+        writeFileSync(maskDestPath, maskBuffer);
+        console.log(`[Anima] Máscara salva em: ${maskDestPath}`);
+      } catch {
+        console.warn("[Anima] Não foi possível salvar máscara localmente, tentando upload via API...");
+        const maskBlob = new Blob([maskBuffer], { type: "image/png" });
+        const maskFormData = new FormData();
+        maskFormData.append("image", maskBlob, maskFilename);
+        maskFormData.append("type", "input");
+        const maskUploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: maskFormData });
+        if (!maskUploadRes.ok) {
+          throw new Error(`Falha ao enviar máscara para ComfyUI: ${maskUploadRes.status}`);
+        }
+        console.log("[Anima] Upload da máscara realizado com sucesso");
+      }
+    }
     const improveParams = {
       ...params,
       imagePath: inputFilename,
-      filenamePrefix: params.filenamePrefix || "anima-improve"
+      filenamePrefix: params.filenamePrefix || "anima-improve",
+      maskFilename
     };
     const prompt = workflowManager.buildPrompt(improveParams);
     console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
@@ -823,6 +1051,89 @@ function setupIPC() {
       }
     } catch (err) {
       console.warn("[Anima] Erro ao salvar histórico:", err);
+    }
+    return { promptId: response.prompt_id, images: savedImages };
+  });
+  ipcMain.handle("comfyui:captionImage", async (_event, params) => {
+    console.log("[Anima] Iniciando captioning de imagem...");
+    if (!params.imageBase64) {
+      throw new Error("Imagem não fornecida");
+    }
+    const settings2 = settingsManager.get();
+    const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/);
+    const imgExt = imageMatch ? imageMatch[1] : "png";
+    const inputFilename = `anima-caption-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
+    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const imageBuffer = Buffer.from(imageData, "base64");
+    const destPath = join(comfyInputDir, inputFilename);
+    try {
+      writeFileSync(destPath, imageBuffer);
+      console.log(`[Anima] Imagem para caption salva em: ${destPath}`);
+    } catch {
+      console.warn("[Anima] Não foi possível salvar localmente, tentando upload via API...");
+      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` });
+      const formData = new FormData();
+      formData.append("image", blob, inputFilename);
+      formData.append("type", "input");
+      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: formData });
+      if (!uploadRes.ok) {
+        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`);
+      }
+      console.log("[Anima] Upload da imagem realizado com sucesso");
+    }
+    const result = await comfyClient.captionImage(inputFilename);
+    console.log("[Anima] Caption gerado:", result.text ? result.text.slice(0, 100) + "..." : "vazio");
+    return result;
+  });
+  ipcMain.handle("comfyui:generatePose", async (_event, params) => {
+    console.log("[Anima] Iniciando geração com pose...");
+    console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
+    console.log("[Anima] Pose data:", params.poseData ? "presente" : "ausente");
+    const prompt = workflowManager.buildPrompt(params);
+    console.log("[Anima] Prompt construído, nós:", Object.keys(prompt).length);
+    const response = await comfyClient.sendPrompt(prompt);
+    console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
+    if (Object.keys(response.node_errors ?? {}).length > 0) {
+      console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
+      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
+    }
+    const images = await comfyClient.waitForResult(
+      response.prompt_id,
+      (current, max) => {
+        mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+      }
+    );
+    console.log(`[Anima] Geração com pose concluída, ${images.length} imagem(ns)`);
+    if (images.length === 0) {
+      throw new Error("ComfyUI não retornou imagens");
+    }
+    const historyBaseDir = join(app.getPath("userData"), "history");
+    const historyDir = join(historyBaseDir, response.prompt_id);
+    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
+    try {
+      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true });
+      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true });
+      savedImages = [];
+      for (const img of images) {
+        const now = /* @__PURE__ */ new Date();
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+        const prefix = params.filenamePrefix || "anima-pose";
+        const ext = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
+        const newFilename = `[${prefix}][${timestamp}].${ext}`;
+        const imgPath = join(historyDir, newFilename);
+        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
+        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
+        const metadata = {
+          params,
+          filename: newFilename,
+          timestamp: Date.now()
+        };
+        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
+      }
+      console.log(`[Anima] Imagens salvas em: ${historyDir}`);
+    } catch (err) {
+      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
     }
     return { promptId: response.prompt_id, images: savedImages };
   });

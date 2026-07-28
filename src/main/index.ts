@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join, extname } from 'path'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync, copyFileSync } from 'fs'
+import { join } from 'path'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
 import { WorkflowManager } from './workflow'
@@ -153,24 +153,34 @@ function setupIPC(): void {
     console.log('[Anima] Iniciando melhoria de imagem (img2img)...')
     console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
 
-    if (!params.imagePath) {
-      throw new Error('Caminho da imagem não fornecido')
+    if (!params.imageBase64) {
+      throw new Error('Imagem não fornecida')
     }
 
     const settings = settingsManager.get()
     const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
-    const ext = extname(params.imagePath) || '.png'
-    const inputFilename = `anima-improve-${Date.now()}${ext}`
-    const destPath = join(comfyInputDir, inputFilename)
 
+    // Decode base64 image and save to ComfyUI input
+    const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/)
+    const imgExt = imageMatch ? imageMatch[1] : 'png'
+    const inputFilename = `anima-improve-${Date.now()}.${imgExt === 'jpeg' ? 'jpg' : imgExt}`
+    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, '')
+    const imageBuffer = Buffer.from(imageData, 'base64')
+
+    // Try local save first, fallback to API upload
+    const destPath = join(comfyInputDir, inputFilename)
+    let savedLocally = false
     try {
-      copyFileSync(params.imagePath, destPath)
-      console.log(`[Anima] Imagem copiada para: ${destPath}`)
+      writeFileSync(destPath, imageBuffer)
+      console.log(`[Anima] Imagem salva em: ${destPath}`)
+      savedLocally = true
     } catch {
-      console.warn('[Anima] Não foi possível copiar para input do ComfyUI, tentando upload via API...')
-      const imageData = readFileSync(params.imagePath)
+      console.warn('[Anima] Não foi possível salvar localmente, tentando upload via API...')
+    }
+
+    if (!savedLocally) {
+      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` })
       const formData = new FormData()
-      const blob = new Blob([imageData], { type: `image/${ext.replace('.', '')}` })
       formData.append('image', blob, inputFilename)
       formData.append('type', 'input')
       const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: 'POST', body: formData })
@@ -180,10 +190,36 @@ function setupIPC(): void {
       console.log('[Anima] Upload da imagem realizado com sucesso')
     }
 
+    // Handle mask upload for inpainting
+    let maskFilename: string | undefined
+    if (params.maskBase64) {
+      maskFilename = `anima-mask-${Date.now()}.png`
+      const maskData = params.maskBase64.replace(/^data:image\/\w+;base64,/, '')
+      const maskBuffer = Buffer.from(maskData, 'base64')
+      const maskDestPath = join(comfyInputDir, maskFilename)
+
+      try {
+        writeFileSync(maskDestPath, maskBuffer)
+        console.log(`[Anima] Máscara salva em: ${maskDestPath}`)
+      } catch {
+        console.warn('[Anima] Não foi possível salvar máscara localmente, tentando upload via API...')
+        const maskBlob = new Blob([maskBuffer], { type: 'image/png' })
+        const maskFormData = new FormData()
+        maskFormData.append('image', maskBlob, maskFilename)
+        maskFormData.append('type', 'input')
+        const maskUploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: 'POST', body: maskFormData })
+        if (!maskUploadRes.ok) {
+          throw new Error(`Falha ao enviar máscara para ComfyUI: ${maskUploadRes.status}`)
+        }
+        console.log('[Anima] Upload da máscara realizado com sucesso')
+      }
+    }
+
     const improveParams = {
       ...params,
       imagePath: inputFilename,
-      filenamePrefix: params.filenamePrefix || 'anima-improve'
+      filenamePrefix: params.filenamePrefix || 'anima-improve',
+      maskFilename
     }
     const prompt = workflowManager.buildPrompt(improveParams)
     console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
@@ -229,6 +265,104 @@ function setupIPC(): void {
       }
     } catch (err) {
       console.warn('[Anima] Erro ao salvar histórico:', err)
+    }
+
+    return { promptId: response.prompt_id, images: savedImages }
+  })
+
+  ipcMain.handle('comfyui:captionImage', async (_event, params: { imageBase64: string }) => {
+    console.log('[Anima] Iniciando captioning de imagem...')
+
+    if (!params.imageBase64) {
+      throw new Error('Imagem não fornecida')
+    }
+
+    const settings = settingsManager.get()
+    const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+
+    const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/)
+    const imgExt = imageMatch ? imageMatch[1] : 'png'
+    const inputFilename = `anima-caption-${Date.now()}.${imgExt === 'jpeg' ? 'jpg' : imgExt}`
+    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, '')
+    const imageBuffer = Buffer.from(imageData, 'base64')
+
+    const destPath = join(comfyInputDir, inputFilename)
+    try {
+      writeFileSync(destPath, imageBuffer)
+      console.log(`[Anima] Imagem para caption salva em: ${destPath}`)
+    } catch {
+      console.warn('[Anima] Não foi possível salvar localmente, tentando upload via API...')
+      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` })
+      const formData = new FormData()
+      formData.append('image', blob, inputFilename)
+      formData.append('type', 'input')
+      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: 'POST', body: formData })
+      if (!uploadRes.ok) {
+        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`)
+      }
+      console.log('[Anima] Upload da imagem realizado com sucesso')
+    }
+
+    const result = await comfyClient.captionImage(inputFilename)
+    console.log('[Anima] Caption gerado:', result.text ? result.text.slice(0, 100) + '...' : 'vazio')
+
+    return result
+  })
+
+  ipcMain.handle('comfyui:generatePose', async (_event, params) => {
+    console.log('[Anima] Iniciando geração com pose...')
+    console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
+    console.log('[Anima] Pose data:', params.poseData ? 'presente' : 'ausente')
+
+    const prompt = workflowManager.buildPrompt(params)
+    console.log('[Anima] Prompt construído, nós:', Object.keys(prompt).length)
+    const response = await comfyClient.sendPrompt(prompt)
+    console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
+    if (Object.keys(response.node_errors ?? {}).length > 0) {
+      console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
+      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+    }
+    const images = await comfyClient.waitForResult(
+      response.prompt_id,
+      (current, max) => {
+        mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+      }
+    )
+    console.log(`[Anima] Geração com pose concluída, ${images.length} imagem(ns)`)
+    if (images.length === 0) {
+      throw new Error('ComfyUI não retornou imagens')
+    }
+
+    const historyBaseDir = join(app.getPath('userData'), 'history')
+    const historyDir = join(historyBaseDir, response.prompt_id)
+    let savedImages = images.map((img) => ({ ...img, filePath: '' }))
+
+    try {
+      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true })
+      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true })
+
+      savedImages = []
+      for (const img of images) {
+        const now = new Date()
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+        const prefix = params.filenamePrefix || 'anima-pose'
+        const ext = img.filename.endsWith('.png') ? 'png' : img.filename.endsWith('.jpg') || img.filename.endsWith('.jpeg') ? 'jpg' : 'png'
+        const newFilename = `[${prefix}][${timestamp}].${ext}`
+        const imgPath = join(historyDir, newFilename)
+        writeFileSync(imgPath, Buffer.from(img.data, 'base64'))
+        savedImages.push({ ...img, filePath: imgPath, filename: newFilename })
+
+        const metadata = {
+          params,
+          filename: newFilename,
+          timestamp: Date.now()
+        }
+        writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
+      }
+
+      console.log(`[Anima] Imagens salvas em: ${historyDir}`)
+    } catch (err) {
+      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err)
     }
 
     return { promptId: response.prompt_id, images: savedImages }

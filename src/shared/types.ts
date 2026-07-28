@@ -36,6 +36,12 @@ export interface GenerationParams {
   filenamePrefix?: string
   imagePath?: string
   denoise?: number
+  maskBase64?: string
+  maskFilename?: string
+  // Pose parameters (VNCCS)
+  poseData?: string
+  lineThickness?: number
+  safeZone?: number
 }
 
 export interface GenerationResult {
@@ -103,7 +109,15 @@ export interface AppSettings {
 export interface ComfyUIHistoryItem {
   prompt: unknown[]
   outputs: Record<string, {
-    images: { filename: string; subfolder: string; type: string }[]
+    images?: { filename: string; subfolder: string; type: string }[]
+    tags?: string
+    text?: string
+    string?: string
   }>
   status: { status_str: string; completed: boolean }
+}
+
+export interface CaptionResult {
+  text: string
+  success: boolean
 }

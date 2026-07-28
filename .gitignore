@@ -3,3 +3,4 @@ node_modules/*
 docs/*
 src/renderer/dist
 out/*
+release/*

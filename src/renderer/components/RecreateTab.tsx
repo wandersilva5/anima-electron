@@ -1,11 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Paintbrush, X, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight } from 'lucide-react'
+import { Upload, Wand2, Trash2, FileText, Sparkles, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight } from 'lucide-react'
 import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
 import type { DiffusionModelId } from '@shared/types'
-import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
 
-export function ImageImprove() {
+export function RecreateTab() {
   const { status, loras, models, refreshLoras } = useSessionStore()
 
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
@@ -13,23 +12,21 @@ export function ImageImprove() {
   const [selectedLora, setSelectedLora] = useState<string | null>(null)
   const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
   const [loraStrengthClip, setLoraStrengthClip] = useState(0.5)
-  const [prompt, setPrompt] = useState('')
   const [denoise, setDenoise] = useState(0.85)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
+  const [caption, setCaption] = useState('')
+  const [captioning, setCaptioning] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
-  const [brushMode, setBrushMode] = useState(false)
   const [showingResult, setShowingResult] = useState(true)
-  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 })
   const [lorasOpen, setLorasOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const [loraSearch, setLoraSearch] = useState('')
   const [refreshingLoras, setRefreshingLoras] = useState(false)
   const [lorasRefreshed, setLorasRefreshed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const brushRef = useRef<BrushCanvasHandle>(null)
   const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const profile = MODEL_PROFILES[selectedModel]
@@ -46,7 +43,6 @@ export function ImageImprove() {
     lora.name.toLowerCase().includes(loraSearch.toLowerCase())
   )
 
-  // Auto-select first compatible model
   useEffect(() => {
     if (filteredModels.length > 0 && !filteredModels.some(m => m.name === selectedCheckpoint)) {
       setSelectedCheckpoint(filteredModels[0].name)
@@ -72,12 +68,30 @@ export function ImageImprove() {
     reader.onload = (e) => {
       setOriginalSrc(e.target?.result as string)
       setResultSrc(null)
+      setCaption('')
       setError(null)
-      setBrushMode(false)
-      setShowingResult(true)
     }
     reader.readAsDataURL(file)
   }, [])
+
+  const handlePaste = useCallback((e: ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) handleFile(file)
+        break
+      }
+    }
+  }, [handleFile])
+
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [handlePaste])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -89,41 +103,40 @@ export function ImageImprove() {
   const clearImage = useCallback(() => {
     setOriginalSrc(null)
     setResultSrc(null)
+    setCaption('')
     setError(null)
-    setBrushMode(false)
-    setShowingResult(true)
-    setImageDimensions({ width: 0, height: 0 })
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
-  useEffect(() => {
+  const handleCaption = useCallback(async () => {
     if (!originalSrc) return
-    const img = new Image()
-    img.onload = () => {
-      setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+    setCaptioning(true)
+    setError(null)
+    try {
+      const result = await window.electronAPI.comfyui.captionImage({ imageBase64: originalSrc })
+      if (result.text) {
+        setCaption(result.text)
+      } else {
+        setError('Não foi possível extrair descrição. Tente escrever manualmente.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao gerar descrição')
+    } finally {
+      setCaptioning(false)
     }
-    img.src = originalSrc
   }, [originalSrc])
 
-  const handleImprove = useCallback(async () => {
-    if (!originalSrc || !prompt.trim()) return
+  const handleRecreate = useCallback(async () => {
+    if (!originalSrc || !caption.trim()) return
     setGenerating(true)
     setError(null)
     setResultSrc(null)
     setShowingResult(true)
 
     try {
-      let maskBase64: string | undefined
-      if (brushMode && brushRef.current) {
-        const mask = brushRef.current.getMaskBase64()
-        if (mask) {
-          maskBase64 = mask
-        }
-      }
-
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
-        prompt,
+        prompt: caption,
         negativePrompt: '',
         seed: Math.floor(Math.random() * 2147483647),
         steps: 20,
@@ -136,8 +149,7 @@ export function ImageImprove() {
         loraStrengthClip,
         imageBase64: originalSrc,
         denoise,
-        filenamePrefix: 'anima-improve',
-        maskBase64
+        filenamePrefix: 'anima-recreate'
       })
 
       const image = result.images?.[0]
@@ -145,11 +157,11 @@ export function ImageImprove() {
         setResultSrc(`data:image/png;base64,${image.data}`)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao melhorar imagem')
+      setError(err instanceof Error ? err.message : 'Erro ao recriar imagem')
     } finally {
       setGenerating(false)
     }
-  }, [originalSrc, prompt, selectedModel, denoise, brushMode, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip])
+  }, [originalSrc, caption, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -171,9 +183,9 @@ export function ImageImprove() {
           >
             <Upload size={40} className="text-text-muted mb-3" />
             <span className="text-sm text-text-secondary font-medium">
-              Clique ou arraste uma imagem
+              Clique, arraste ou cole uma imagem
             </span>
-            <span className="text-xs text-text-muted mt-1">PNG, JPG ou WebP</span>
+            <span className="text-xs text-text-muted mt-1">PNG, JPG ou WebP · Ctrl+V para colar</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -195,21 +207,10 @@ export function ImageImprove() {
                 draggable={false}
               />
 
-              {!resultSrc && brushMode && originalSrc && imageDimensions.width > 0 && (
-                <BrushCanvas
-                  ref={brushRef}
-                  imageSrc={originalSrc}
-                  imageWidth={imageDimensions.width}
-                  imageHeight={imageDimensions.height}
-                  visible={true}
-                />
-              )}
-
               <div className={`absolute top-3 left-3 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider ${resultSrc && showingResult ? 'bg-success/90 text-white' : 'bg-surface/80 text-text-secondary backdrop-blur-sm'}`}>
-                {resultSrc && showingResult ? 'Melhorado' : brushMode ? 'Modo Pincel' : 'Original'}
+                {resultSrc && showingResult ? 'Recriado' : 'Original'}
               </div>
 
-              {/* Compare toggle */}
               {resultSrc && (
                 <button
                   onClick={() => setShowingResult(!showingResult)}
@@ -240,20 +241,19 @@ export function ImageImprove() {
 
               {!resultSrc && (
                 <button
-                  onClick={() => {
-                    setBrushMode(!brushMode)
-                    if (brushMode) {
-                      brushRef.current?.clearMask()
-                    }
-                  }}
+                  onClick={handleCaption}
+                  disabled={captioning || !status.online}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                    brushMode
-                      ? 'bg-accent/20 text-accent border border-accent/30'
+                    captioning
+                      ? 'bg-accent/20 text-accent border border-accent/30 cursor-not-allowed'
                       : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'
                   }`}
                 >
-                  {brushMode ? <X size={14} /> : <Paintbrush size={14} />}
-                  {brushMode ? 'Sair do Pincel' : 'Marcar Área'}
+                  {captioning ? (
+                    <><div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" /> Gerando...</>
+                  ) : (
+                    <><FileText size={14} /> Gerar Descrição</>
+                  )}
                 </button>
               )}
 
@@ -268,42 +268,6 @@ export function ImageImprove() {
                 }}
               />
             </div>
-
-            {/* Brush controls below image */}
-            {brushMode && !resultSrc && (
-              <div className="flex items-center gap-2 bg-surface-secondary border border-border rounded-xl px-4 py-2.5 shadow-sm">
-                <button
-                  onClick={() => brushRef.current?.setIsErasing(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white transition-colors"
-                >
-                  Pincel
-                </button>
-                <button
-                  onClick={() => brushRef.current?.setIsErasing(true)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-tertiary text-text-secondary hover:text-text-primary transition-colors"
-                >
-                  Borracha
-                </button>
-
-                <div className="w-px h-5 bg-border" />
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-text-muted">Tamanho</span>
-                  <input
-                    type="range"
-                    min={5}
-                    max={100}
-                    defaultValue={30}
-                    onChange={(e) => brushRef.current?.setBrushSize(Number(e.target.value))}
-                    className="w-24 h-1"
-                  />
-                </div>
-
-                <div className="w-px h-5 bg-border" />
-
-                <span className="text-[11px] text-text-muted">Pinte sobre a área que deseja modificar</span>
-              </div>
-            )}
           </div>
         )}
       </main>
@@ -529,28 +493,33 @@ export function ImageImprove() {
               )}
             </div>
 
-            {/* Prompt */}
+            {/* Caption textarea */}
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                {brushMode ? 'O que deseja na área marcada?' : 'O que deseja modificar?'}
+              <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+                Descrição Extraída
               </label>
               <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={brushMode
-                  ? 'Descreva como a área marcada deve ficar. Ex: adicione flores, mude a cor para azul...'
-                  : 'Descreva a melhoria desejada. Ex: deixe mais nítido, melhore as cores, adicione detalhes...'
-                }
-                rows={4}
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder={originalSrc ? 'Clique em "Gerar Descrição" para extrair o texto da imagem, ou digite manualmente.' : 'Faça upload de uma imagem primeiro.'}
+                rows={5}
                 className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
                 disabled={!originalSrc || generating}
               />
+              {caption && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <Sparkles size={10} className="text-accent shrink-0" />
+                  <span className="text-[10px] text-text-muted">
+                    Descrição extraída automaticamente. Edite se necessário.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Denoise */}
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-text-secondary">Força da Modificação</label>
+                <label className="text-xs font-medium text-text-secondary">Força da Recriação</label>
                 <span className="text-xs text-text-secondary font-mono">{denoise.toFixed(2)}</span>
               </div>
               <input
@@ -581,18 +550,34 @@ export function ImageImprove() {
               <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 border border-success/20">
                 <Wand2 size={14} className="text-success shrink-0" />
                 <span className="text-xs text-text-primary">
-                  Imagem melhorada!
+                  Imagem recriada com sucesso!
                 </span>
               </div>
             )}
 
             <button
-              onClick={handleImprove}
-              disabled={!originalSrc || !prompt.trim() || generating || !status.online}
+              onClick={handleCaption}
+              disabled={!originalSrc || captioning || !status.online}
+              className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl font-medium text-xs transition-all duration-200 mb-2 ${
+                (!originalSrc || captioning || !status.online)
+                  ? 'bg-surface-tertiary text-text-muted cursor-not-allowed'
+                  : 'bg-surface text-text-secondary hover:bg-surface-tertiary hover:text-text-primary border border-border'
+              }`}
+            >
+              {captioning ? (
+                <><div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" /> Gerando Descrição...</>
+              ) : (
+                <><FileText size={14} /> {caption ? 'Regenerar Descrição' : 'Gerar Descrição'}</>
+              )}
+            </button>
+
+            <button
+              onClick={handleRecreate}
+              disabled={!originalSrc || !caption.trim() || generating || !status.online}
               className={`
                 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium text-sm
                 transition-all duration-200
-                ${(!originalSrc || !prompt.trim() || generating || !status.online)
+                ${(!originalSrc || !caption.trim() || generating || !status.online)
                   ? 'bg-accent-muted text-text-muted cursor-not-allowed'
                   : 'bg-accent text-white hover:bg-accent-hover active:scale-[0.98] shadow-lg shadow-accent/20'
                 }
@@ -601,12 +586,12 @@ export function ImageImprove() {
               {generating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Melhorando...
+                  Recriando...
                 </>
               ) : (
                 <>
-                  <Wand2 size={16} />
-                  {brushMode ? 'Aplicar na Área' : 'Melhorar Imagem'}
+                  <Sparkles size={16} />
+                  Recriar Imagem
                 </>
               )}
             </button>

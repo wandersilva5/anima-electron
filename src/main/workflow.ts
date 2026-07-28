@@ -151,11 +151,23 @@ export class WorkflowManager {
 
     const nodes = structuredClone(data.workflow.nodes)
     const prompt: Record<string, unknown> = {}
+    const skipNodeIds = new Set<number>()
 
     const isImg2Img = !!params.imagePath
+    const hasLora = !!params.loraName
+
+    // When no LoRA selected, skip LoraLoader node entirely
+    // The input resolution code below will trace through skipped nodes
+    if (!hasLora) {
+      const loraNode = nodes.find(n => n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly')
+      if (loraNode) {
+        skipNodeIds.add(loraNode.id)
+      }
+    }
 
     for (const node of nodes) {
       if (node.type === 'Note' || node.type === 'Reroute') continue
+      if (skipNodeIds.has(node.id)) continue
       const widgetValues = [...(node.widgets_values ?? [])]
 
       switch (node.type) {
@@ -230,9 +242,26 @@ export class WorkflowManager {
         let widgetIndex = 0
         for (const input of node.inputs) {
           if (input.link !== null) {
-            const link = data.workflow.links.find(l => l[0] === input.link)
+            const link = data.workflow.links.find(l => l && l[0] === input.link)
             if (link) {
-              inputs[input.name] = [String(link[1]), link[2]]
+              const fromNodeId = link[1]
+              const fromSlot = link[2]
+              // If link comes from a skipped node (LoraLoader), trace back to its source
+              if (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
+                const skippedNode = nodes.find(n => n.id === fromNodeId)
+                // For LoraLoader: output 0=MODEL (from "model" input), output 1=CLIP (from "clip" input)
+                const inputName = fromSlot === 0 ? 'model' : 'clip'
+                const skippedInput = skippedNode?.inputs?.find(i => i.name === inputName)
+                const skippedLink = skippedInput?.link
+                if (skippedLink !== null && skippedLink !== undefined) {
+                  const sourceLink = data.workflow.links.find(l => l && l[0] === skippedLink)
+                  if (sourceLink) {
+                    inputs[input.name] = [String(sourceLink[1]), sourceLink[2] as number]
+                  }
+                }
+              } else {
+                inputs[input.name] = [String(fromNodeId), fromSlot as number]
+              }
             }
           } else {
             if (widgetIndex < widgetValues.length) {
@@ -245,6 +274,21 @@ export class WorkflowManager {
 
       nodeEntry.inputs = inputs
       prompt[String(node.id)] = nodeEntry
+    }
+
+    // Inject pose data into VNCCS_PoseGenerator node
+    if ((params as any).poseData) {
+      const poseNode = nodes.find(n => n.type === 'VNCCS_PoseGenerator')
+      if (poseNode) {
+        const poseEntry = prompt[String(poseNode.id)]
+        if (poseEntry) {
+          const inputs = (poseEntry as any).inputs as Record<string, unknown>
+          inputs['pose_data'] = (params as any).poseData
+          inputs['line_thickness'] = (params as any).lineThickness ?? 3
+          inputs['safe_zone'] = (params as any).safeZone ?? 100
+          console.log('[Anima] Pose data injected into VNCCS_PoseGenerator')
+        }
+      }
     }
 
     if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
@@ -268,11 +312,44 @@ export class WorkflowManager {
         }
       }
 
-      const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
-      if (ksamplerEntry) {
-        const kInputs = ksamplerEntry.inputs as Record<string, unknown>
-        if (kInputs) {
-          kInputs.latent_image = [String(vaeEncodeId), 0]
+      const hasMask = !!params.maskBase64
+
+      if (hasMask) {
+        // Inpainting mode: add SetLatentNoiseMask + LoadImage for mask
+        const setMaskId = 99992
+        const loadMaskId = 99993
+
+        prompt[String(loadMaskId)] = {
+          class_type: 'LoadImage',
+          _meta: { title: 'LoadImage (mask)' },
+          inputs: {
+            image: params.maskFilename || 'mask.png'
+          }
+        }
+
+        prompt[String(setMaskId)] = {
+          class_type: 'SetLatentNoiseMask',
+          _meta: { title: 'SetLatentNoiseMask (inpaint)' },
+          inputs: {
+            samples: [String(vaeEncodeId), 0],
+            mask: [String(loadMaskId), 1]
+          }
+        }
+
+        const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
+        if (ksamplerEntry) {
+          const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+          if (kInputs) {
+            kInputs.latent_image = [String(setMaskId), 0]
+          }
+        }
+      } else {
+        const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
+        if (ksamplerEntry) {
+          const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+          if (kInputs) {
+            kInputs.latent_image = [String(vaeEncodeId), 0]
+          }
         }
       }
     }
