@@ -2,11 +2,12 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { Upload, Wand2, Trash2, Paintbrush, X, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight } from 'lucide-react'
 import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
-import type { DiffusionModelId } from '@shared/types'
+import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
+import { SafeImage } from './SafeImage'
 
 export function ImageImprove() {
-  const { status, loras, models, refreshLoras } = useSessionStore()
+  const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
@@ -142,14 +143,37 @@ export function ImageImprove() {
 
       const image = result.images?.[0]
       if (image) {
-        setResultSrc(`data:image/png;base64,${image.data}`)
+        const src = `data:image/png;base64,${image.data}`
+        setResultSrc(src)
+        const entry: GenerationResult = {
+          id: result.promptId,
+          imageBase64: src,
+          filePath: image.filePath,
+          filename: image.filename,
+          params: {
+            diffusionModel: selectedModel,
+            prompt,
+            negativePrompt: '',
+            seed: Math.floor(Math.random() * 2147483647),
+            steps: 20,
+            cfg: 5,
+            width: 1024,
+            height: 1024,
+            modelName: selectedCheckpoint,
+            loraName: selectedLora,
+            loraStrengthModel,
+            loraStrengthClip,
+          },
+          timestamp: Date.now()
+        }
+        addToHistory(entry)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao melhorar imagem')
     } finally {
       setGenerating(false)
     }
-  }, [originalSrc, prompt, selectedModel, denoise, brushMode, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip])
+  }, [originalSrc, prompt, selectedModel, denoise, brushMode, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -371,17 +395,30 @@ export function ImageImprove() {
                               onClick={() => setSelectedCheckpoint(model.name)}
                               title={displayName}
                               className={`
-                                aspect-square rounded-xl border-2 flex items-center justify-center
+                                relative aspect-square rounded-xl border-2 overflow-hidden
                                 transition-all
                                 ${isSelected
-                                  ? 'border-accent bg-accent/10 text-accent'
-                                  : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
+                                  ? 'border-accent ring-1 ring-accent'
+                                  : 'border-border hover:border-text-muted'
                                 }
                               `}
                             >
-                              <span className="text-[9px] text-center px-1 leading-tight">
-                                {displayName.slice(0, 18)}
-                              </span>
+                              {model.previewUrl ? (
+                                <SafeImage
+                                  path={model.previewUrl}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+                                  <span className="text-[10px] text-text-muted text-center px-1 leading-tight">
+                                    {displayName.slice(0, 18)}
+                                  </span>
+                                </div>
+                              )}
+                              {isSelected && (
+                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                              )}
                             </button>
                           )
                         })}
@@ -471,17 +508,30 @@ export function ImageImprove() {
                               onClick={() => setSelectedLora(lora.name)}
                               title={displayName}
                               className={`
-                                aspect-square rounded-xl border-2 flex items-center justify-center
-                                transition-all
+                                relative aspect-square rounded-xl border-2 overflow-hidden
+                                transition-all group
                                 ${selectedLora === lora.name
-                                  ? 'border-accent bg-accent/10 text-accent'
-                                  : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
+                                  ? 'border-accent ring-1 ring-accent'
+                                  : 'border-border hover:border-text-muted'
                                 }
                               `}
                             >
-                              <span className="text-[8px] text-center px-1 leading-tight">
-                                {displayName.slice(0, 15)}
-                              </span>
+                              {lora.previewUrl ? (
+                                <SafeImage
+                                  path={lora.previewUrl}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+                                  <span className="text-[8px] text-text-muted text-center px-1 leading-tight">
+                                    {displayName.slice(0, 15)}
+                                  </span>
+                                </div>
+                              )}
+                              {selectedLora === lora.name && (
+                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                              )}
                             </button>
                           )
                         })}

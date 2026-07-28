@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, FileText, Sparkles, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight } from 'lucide-react'
+import { Upload, Wand2, Trash2, Sparkles, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight, Clock } from 'lucide-react'
 import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
-import type { DiffusionModelId } from '@shared/types'
+import type { DiffusionModelId, GenerationResult } from '@shared/types'
+import { SafeImage } from './SafeImage'
 
 export function RecreateTab() {
-  const { status, loras, models, refreshLoras } = useSessionStore()
+  const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
@@ -26,8 +27,13 @@ export function RecreateTab() {
   const [loraSearch, setLoraSearch] = useState('')
   const [refreshingLoras, setRefreshingLoras] = useState(false)
   const [lorasRefreshed, setLorasRefreshed] = useState(false)
+  const [progress, setProgress] = useState<{ current: number; max: number } | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const [eta, setEta] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
+  const startTimeRef = useRef(0)
+  const progressTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const profile = MODEL_PROFILES[selectedModel]
 
@@ -48,6 +54,15 @@ export function RecreateTab() {
       setSelectedCheckpoint(filteredModels[0].name)
     }
   }, [filteredModels, selectedCheckpoint])
+
+  useEffect(() => {
+    setSelectedLora(null)
+    setLorasOpen(false)
+    const folder = MODEL_PROFILES[selectedModel].loraFolder
+    window.electronAPI.loras.list(folder).then((newLoras) => {
+      useSessionStore.getState().setLoras(newLoras)
+    }).catch(() => {})
+  }, [selectedModel])
 
   const handleRefreshLoras = useCallback(async () => {
     if (refreshingLoras) return
@@ -108,41 +123,46 @@ export function RecreateTab() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
-  const handleCaption = useCallback(async () => {
-    if (!originalSrc) return
-    setCaptioning(true)
-    setError(null)
-    try {
-      const result = await window.electronAPI.comfyui.captionImage({ imageBase64: originalSrc })
-      if (result.text) {
-        setCaption(result.text)
-      } else {
-        setError('Não foi possível extrair descrição. Tente escrever manualmente.')
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao gerar descrição')
-    } finally {
-      setCaptioning(false)
-    }
-  }, [originalSrc])
-
-  const handleRecreate = useCallback(async () => {
-    if (!originalSrc || !caption.trim()) return
+  const doRecreate = useCallback(async (captionText: string) => {
+    if (!originalSrc || !captionText.trim()) return
     setGenerating(true)
     setError(null)
     setResultSrc(null)
     setShowingResult(true)
+    setProgress(null)
+    setElapsed(0)
+    setEta(null)
+    startTimeRef.current = Date.now()
+
+    const prof = MODEL_PROFILES[selectedModel]
+
+    const unsubProgress = window.electronAPI.comfyui.onProgress((data) => {
+      setProgress(data)
+      const now = Date.now()
+      const elapsedSec = (now - startTimeRef.current) / 1000
+      setElapsed(elapsedSec)
+      if (data.current > 0) {
+        const estimated = (elapsedSec / data.current) * data.max
+        setEta(estimated - elapsedSec)
+      }
+    })
+
+    progressTimerRef.current = setInterval(() => {
+      if (startTimeRef.current > 0) {
+        setElapsed((Date.now() - startTimeRef.current) / 1000)
+      }
+    }, 1000)
 
     try {
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
-        prompt: caption,
+        prompt: captionText,
         negativePrompt: '',
         seed: Math.floor(Math.random() * 2147483647),
-        steps: 20,
-        cfg: 5,
-        width: 1024,
-        height: 1024,
+        steps: prof.defaults.steps,
+        cfg: prof.defaults.cfg,
+        width: prof.defaults.width,
+        height: prof.defaults.height,
         modelName: selectedCheckpoint,
         loraName: selectedLora,
         loraStrengthModel,
@@ -154,14 +174,64 @@ export function RecreateTab() {
 
       const image = result.images?.[0]
       if (image) {
-        setResultSrc(`data:image/png;base64,${image.data}`)
+        const src = `data:image/png;base64,${image.data}`
+        setResultSrc(src)
+        const entry: GenerationResult = {
+          id: result.promptId,
+          imageBase64: src,
+          filePath: image.filePath,
+          filename: image.filename,
+          params: {
+            diffusionModel: selectedModel,
+            prompt: captionText,
+            negativePrompt: '',
+            seed: Math.floor(Math.random() * 2147483647),
+            steps: prof.defaults.steps,
+            cfg: prof.defaults.cfg,
+            width: prof.defaults.width,
+            height: prof.defaults.height,
+            modelName: selectedCheckpoint,
+            loraName: selectedLora,
+            loraStrengthModel,
+            loraStrengthClip,
+          },
+          timestamp: Date.now()
+        }
+        addToHistory(entry)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao recriar imagem')
     } finally {
+      unsubProgress()
+      clearInterval(progressTimerRef.current)
       setGenerating(false)
+      setProgress(null)
     }
-  }, [originalSrc, caption, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip])
+  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, addToHistory])
+
+  const handleRecreate = useCallback(async () => {
+    if (!originalSrc) return
+
+    if (!caption.trim()) {
+      setCaptioning(true)
+      setError(null)
+      try {
+        const result = await window.electronAPI.comfyui.captionImage({ imageBase64: originalSrc })
+        if (result.text) {
+          setCaption(result.text)
+          await doRecreate(result.text)
+        } else {
+          setError('Não foi possível extrair descrição. Tente escrever manualmente.')
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Erro ao gerar descrição')
+      } finally {
+        setCaptioning(false)
+      }
+    } else {
+      await doRecreate(caption)
+    }
+  }, [originalSrc, caption, doRecreate])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -238,24 +308,6 @@ export function RecreateTab() {
                 <Upload size={14} />
                 Trocar
               </button>
-
-              {!resultSrc && (
-                <button
-                  onClick={handleCaption}
-                  disabled={captioning || !status.online}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                    captioning
-                      ? 'bg-accent/20 text-accent border border-accent/30 cursor-not-allowed'
-                      : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  {captioning ? (
-                    <><div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" /> Gerando...</>
-                  ) : (
-                    <><FileText size={14} /> Gerar Descrição</>
-                  )}
-                </button>
-              )}
 
               <input
                 ref={fileInputRef}
@@ -335,17 +387,30 @@ export function RecreateTab() {
                               onClick={() => setSelectedCheckpoint(model.name)}
                               title={displayName}
                               className={`
-                                aspect-square rounded-xl border-2 flex items-center justify-center
+                                relative aspect-square rounded-xl border-2 overflow-hidden
                                 transition-all
                                 ${isSelected
-                                  ? 'border-accent bg-accent/10 text-accent'
-                                  : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
+                                  ? 'border-accent ring-1 ring-accent'
+                                  : 'border-border hover:border-text-muted'
                                 }
                               `}
                             >
-                              <span className="text-[9px] text-center px-1 leading-tight">
-                                {displayName.slice(0, 18)}
-                              </span>
+                              {model.previewUrl ? (
+                                <SafeImage
+                                  path={model.previewUrl}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+                                  <span className="text-[10px] text-text-muted text-center px-1 leading-tight">
+                                    {displayName.slice(0, 18)}
+                                  </span>
+                                </div>
+                              )}
+                              {isSelected && (
+                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                              )}
                             </button>
                           )
                         })}
@@ -435,17 +500,30 @@ export function RecreateTab() {
                               onClick={() => setSelectedLora(lora.name)}
                               title={displayName}
                               className={`
-                                aspect-square rounded-xl border-2 flex items-center justify-center
-                                transition-all
+                                relative aspect-square rounded-xl border-2 overflow-hidden
+                                transition-all group
                                 ${selectedLora === lora.name
-                                  ? 'border-accent bg-accent/10 text-accent'
-                                  : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
+                                  ? 'border-accent ring-1 ring-accent'
+                                  : 'border-border hover:border-text-muted'
                                 }
                               `}
                             >
-                              <span className="text-[8px] text-center px-1 leading-tight">
-                                {displayName.slice(0, 15)}
-                              </span>
+                              {lora.previewUrl ? (
+                                <SafeImage
+                                  path={lora.previewUrl}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+                                  <span className="text-[8px] text-text-muted text-center px-1 leading-tight">
+                                    {displayName.slice(0, 15)}
+                                  </span>
+                                </div>
+                              )}
+                              {selectedLora === lora.name && (
+                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                              )}
                             </button>
                           )
                         })}
@@ -501,7 +579,7 @@ export function RecreateTab() {
               <textarea
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
-                placeholder={originalSrc ? 'Clique em "Gerar Descrição" para extrair o texto da imagem, ou digite manualmente.' : 'Faça upload de uma imagem primeiro.'}
+                placeholder={originalSrc ? 'Clique em "Recriar Imagem" para extrair a descrição e recriar automaticamente, ou digite manualmente.' : 'Faça upload de uma imagem primeiro.'}
                 rows={5}
                 className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
                 disabled={!originalSrc || generating}
@@ -555,35 +633,60 @@ export function RecreateTab() {
               </div>
             )}
 
-            <button
-              onClick={handleCaption}
-              disabled={!originalSrc || captioning || !status.online}
-              className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl font-medium text-xs transition-all duration-200 mb-2 ${
-                (!originalSrc || captioning || !status.online)
-                  ? 'bg-surface-tertiary text-text-muted cursor-not-allowed'
-                  : 'bg-surface text-text-secondary hover:bg-surface-tertiary hover:text-text-primary border border-border'
-              }`}
-            >
-              {captioning ? (
-                <><div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" /> Gerando Descrição...</>
-              ) : (
-                <><FileText size={14} /> {caption ? 'Regenerar Descrição' : 'Gerar Descrição'}</>
-              )}
-            </button>
+            {generating && (
+              <div className="space-y-2">
+                {progress ? (
+                  <>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-text-secondary flex items-center gap-1">
+                        <Clock size={12} />
+                        {elapsed < 60
+                          ? `${elapsed.toFixed(0)}s`
+                          : `${Math.floor(elapsed / 60)}m ${(elapsed % 60).toFixed(0)}s`}
+                      </span>
+                      <span className="text-text-muted font-mono">{progress.current}/{progress.max}</span>
+                      {eta !== null && eta > 0 && (
+                        <span className="text-text-muted">
+                          ~{eta < 60
+                            ? `${eta.toFixed(0)}s`
+                            : `${Math.floor(eta / 60)}m ${(eta % 60).toFixed(0)}s`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="w-full h-1.5 bg-surface-tertiary rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-accent rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${(progress.current / progress.max) * 100}%` }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 text-xs text-text-secondary">
+                    <div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                    Aguardando ComfyUI...
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               onClick={handleRecreate}
-              disabled={!originalSrc || !caption.trim() || generating || !status.online}
+              disabled={!originalSrc || generating || captioning || !status.online}
               className={`
                 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium text-sm
                 transition-all duration-200
-                ${(!originalSrc || !caption.trim() || generating || !status.online)
+                ${(!originalSrc || generating || captioning || !status.online)
                   ? 'bg-accent-muted text-text-muted cursor-not-allowed'
                   : 'bg-accent text-white hover:bg-accent-hover active:scale-[0.98] shadow-lg shadow-accent/20'
                 }
               `}
             >
-              {generating ? (
+              {captioning ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Gerando descrição...
+                </>
+              ) : generating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Recriando...
