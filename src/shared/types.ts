@@ -117,7 +117,3 @@ export interface ComfyUIHistoryItem {
   status: { status_str: string; completed: boolean }
 }
 
-export interface CaptionResult {
-  text: string
-  success: boolean
-}

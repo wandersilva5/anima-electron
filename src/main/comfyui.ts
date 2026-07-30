@@ -75,20 +75,49 @@ export class ComfyUIClient {
     onProgress?: (current: number, max: number) => void,
     timeoutMs = 300000
   ): Promise<{ filename: string; data: string }[]> {
-    const ws = onProgress ? this.connectProgress(promptId, onProgress) : null
+    let wsError: string | null = null
+    const ws = onProgress ? this.connectProgress(promptId, onProgress, (err) => { wsError = err }) : null
     const startTime = Date.now()
     const pollInterval = 1000
 
     try {
       while (Date.now() - startTime < timeoutMs) {
+        if (wsError) {
+          throw new Error(wsError)
+        }
         const res = await fetch(`${this.baseUrl}/history/${promptId}`)
         if (res.ok) {
           const data: Record<string, ComfyUIHistoryItem> = await res.json()
           const item = data[promptId]
           if (item) {
-            if (item.status.completed) {
-              if (item.status.status_str === 'error') {
-                throw new Error(`ComfyUI execution error for prompt ${promptId}`)
+            const statusStr = item.status?.status_str
+            if (statusStr === 'error' || item.status?.completed) {
+              if (statusStr === 'error') {
+                console.error('[ComfyUIClient] Erro retornado no histórico:', JSON.stringify(item.status))
+                const messages = (item.status as any)?.messages
+                let details = ''
+                if (Array.isArray(messages)) {
+                  for (const msg of messages) {
+                    if (Array.isArray(msg) && msg[1]) {
+                      const msgType = String(msg[0] ?? '').toLowerCase()
+                      const info = msg[1]
+                      if (msgType.includes('error') || typeof info === 'object') {
+                        const nodeType = info.node_type ? `${info.node_type}` : ''
+                        const nodeId = info.node_id ? ` (#${info.node_id})` : ''
+                        const excMsg = info.exception_message || info.exception_type || info.message
+                        if (excMsg) {
+                          details += ` [Nó: ${nodeType}${nodeId}]: ${excMsg}`
+                        } else if (typeof info === 'string') {
+                          details += ` ${info}`
+                        }
+                      }
+                    }
+                  }
+                }
+                if (!details && (item.status as any)?.exception_message) {
+                  details = `: ${(item.status as any).exception_message}`
+                }
+                throw new Error(`Erro na execução do ComfyUI${details || ': Verifique se os modelos e nós exigidos estão instalados.'}`)
               }
               const images: { filename: string; data: string }[] = []
               for (const nodeId of Object.keys(item.outputs)) {
@@ -112,7 +141,7 @@ export class ComfyUIClient {
         }
         await new Promise(resolve => setTimeout(resolve, pollInterval))
       }
-      throw new Error('Timeout waiting for ComfyUI result')
+      throw new Error('Timeout esperando resultado do ComfyUI')
     } finally {
       ws?.close()
     }
@@ -251,7 +280,11 @@ export class ComfyUIClient {
     return { text: '' }
   }
 
-  private connectProgress(promptId: string, onProgress: (current: number, max: number) => void): WebSocket {
+  private connectProgress(
+    promptId: string,
+    onProgress: (current: number, max: number) => void,
+    onError?: (errorMsg: string) => void
+  ): WebSocket {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws'
     const ws = new WebSocket(wsUrl)
 
@@ -264,6 +297,10 @@ export class ComfyUIClient {
         const msg = JSON.parse(raw.toString())
         if (msg.type === 'progress' && msg.data?.prompt_id === promptId) {
           onProgress(msg.data.value, msg.data.max)
+        } else if (msg.type === 'execution_error' && msg.data?.prompt_id === promptId) {
+          const d = msg.data
+          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${d.exception_message || d.exception_type}`
+          onError?.(errStr)
         }
       } catch {
         // ignore parse errors

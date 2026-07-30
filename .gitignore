@@ -4,3 +4,5 @@ docs/*
 src/renderer/dist
 out/*
 release/*
+ANALISE_PROJETO.md
+dist/*

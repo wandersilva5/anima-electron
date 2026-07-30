@@ -77,7 +77,7 @@ function setupIPC(): void {
 
   comfyClient = new ComfyUIClient('http://127.0.0.1:8188')
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath)
-  workflowManager = new WorkflowManager(join(__dirname, '../../workflows'))
+  workflowManager = new WorkflowManager(join(__dirname, '../../workflows'), settings.comfyUIPath)
   loraScanner = new LoraScanner(settingsManager)
   modelScanner = new ModelScanner(settingsManager)
 
@@ -307,65 +307,6 @@ function setupIPC(): void {
     console.log('[Anima] Caption gerado:', result.text ? result.text.slice(0, 100) + '...' : 'vazio')
 
     return result
-  })
-
-  ipcMain.handle('comfyui:generatePose', async (_event, params) => {
-    console.log('[Anima] Iniciando geração com pose...')
-    console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
-    console.log('[Anima] Pose data:', params.poseData ? 'presente' : 'ausente')
-
-    const prompt = workflowManager.buildPrompt(params)
-    console.log('[Anima] Prompt construído, nós:', Object.keys(prompt).length)
-    const response = await comfyClient.sendPrompt(prompt)
-    console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
-    if (Object.keys(response.node_errors ?? {}).length > 0) {
-      console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
-      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
-    }
-    const images = await comfyClient.waitForResult(
-      response.prompt_id,
-      (current, max) => {
-        mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
-      }
-    )
-    console.log(`[Anima] Geração com pose concluída, ${images.length} imagem(ns)`)
-    if (images.length === 0) {
-      throw new Error('ComfyUI não retornou imagens')
-    }
-
-    const historyBaseDir = join(app.getPath('userData'), 'history')
-    const historyDir = join(historyBaseDir, response.prompt_id)
-    let savedImages = images.map((img) => ({ ...img, filePath: '' }))
-
-    try {
-      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true })
-      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true })
-
-      savedImages = []
-      for (const img of images) {
-        const now = new Date()
-        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
-        const prefix = params.filenamePrefix || 'anima-pose'
-        const ext = img.filename.endsWith('.png') ? 'png' : img.filename.endsWith('.jpg') || img.filename.endsWith('.jpeg') ? 'jpg' : 'png'
-        const newFilename = `[${prefix}][${timestamp}].${ext}`
-        const imgPath = join(historyDir, newFilename)
-        writeFileSync(imgPath, Buffer.from(img.data, 'base64'))
-        savedImages.push({ ...img, filePath: imgPath, filename: newFilename })
-
-        const metadata = {
-          params,
-          filename: newFilename,
-          timestamp: Date.now()
-        }
-        writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
-      }
-
-      console.log(`[Anima] Imagens salvas em: ${historyDir}`)
-    } catch (err) {
-      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err)
-    }
-
-    return { promptId: response.prompt_id, images: savedImages }
   })
 
   ipcMain.handle('loras:list', async (_event, subfolder?: string) => {

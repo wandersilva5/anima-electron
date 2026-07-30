@@ -15,8 +15,6 @@
     "isolatedModules": true,
     "baseUrl": ".",
     "paths": {
-      "@main/*": ["src/main/*"],
-      "@renderer/*": ["src/renderer/*"],
       "@shared/*": ["src/shared/*"]
     }
   },

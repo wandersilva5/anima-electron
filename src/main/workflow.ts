@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import type { GenerationParams, WorkflowJSON, DiffusionModelId } from '@shared/types'
 import { MODEL_PROFILES } from '../shared/modelProfiles'
@@ -30,6 +30,23 @@ interface WorkflowData {
   defaults: WorkflowDefaults
 }
 
+function mapGGUFClipToSafetensors(ggufPath: string): string {
+  const knownMappings: Record<string, string> = {
+    'Qwen3-4B-Q6_K.gguf': 'qwen\\qwen3_4b_fp8_scaled.safetensors',
+    'Qwen3-4B-Q8_0.gguf': 'qwen\\qwen3_4b_fp8_scaled.safetensors',
+    'Qwen3-4B-Q4_K_M.gguf': 'qwen\\qwen3_4b_fp8_scaled.safetensors',
+    'Qwen3-4B-Q4_K_S.gguf': 'qwen\\qwen3_4b_fp8_scaled.safetensors',
+  }
+  const filename = ggufPath.split('\\').pop() || ggufPath
+  if (knownMappings[filename]) {
+    return knownMappings[filename]
+  }
+  // Fallback: strip quantization suffix (e.g. -Q6_K) and change .gguf to .safetensors
+  const folder = ggufPath.includes('\\') ? ggufPath.substring(0, ggufPath.lastIndexOf('\\') + 1) : ''
+  const baseName = filename.replace(/-(?:[A-Z0-9]+_?)+\.gguf$/i, '').replace(/\.gguf$/i, '')
+  return folder + baseName + '.safetensors'
+}
+
 function findOriginNode(workflow: WorkflowJSON, targetNodeId: number, inputName: string): any {
   const node = workflow.nodes.find(n => n.id === targetNodeId)
   if (!node || !node.inputs) return undefined
@@ -43,8 +60,13 @@ function findOriginNode(workflow: WorkflowJSON, targetNodeId: number, inputName:
 
 export class WorkflowManager {
   private workflows: Record<string, WorkflowData> = {}
+  private comfyUIPath: string
 
-  constructor(workflowsDir: string) {
+  constructor(workflowsDir: string, comfyUIPath?: string) {
+    this.comfyUIPath = comfyUIPath || ''
+    if (this.comfyUIPath) {
+      this.patchGGUFPlugin()
+    }
     for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
       try {
         const filePath = join(workflowsDir, profile.workflowFile)
@@ -102,6 +124,36 @@ export class WorkflowManager {
     }
   }
 
+  private patchGGUFPlugin(): void {
+    try {
+      const loaderPath = join(this.comfyUIPath, 'ComfyUI', 'custom_nodes', 'ComfyUI-GGUF', 'loader.py')
+      if (!existsSync(loaderPath)) {
+        console.warn('[WorkflowManager] ComfyUI-GGUF loader.py not found')
+        return
+      }
+      const content = readFileSync(loaderPath, 'utf-8')
+      if (content.includes('qwen3')) {
+        console.log('[WorkflowManager] ComfyUI-GGUF loader.py already supports qwen3')
+        return
+      }
+      const patched = content
+        .replace('"qwen2vl"', '"qwen2vl", "qwen3"')
+        .replace("'qwen2vl'", "'qwen2vl', 'qwen3'")
+        .replace(
+          /(if\s+arch\s+in\s+\{[^}]*?)(qwen2vl)([^}]*?\}:)/g,
+          '$1$2, "qwen3"$3'
+        )
+      if (patched === content) {
+        console.warn('[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (unrecognized format)')
+        return
+      }
+      writeFileSync(loaderPath, patched, 'utf-8')
+      console.log('[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support')
+    } catch (err) {
+      console.warn('[WorkflowManager] Failed to patch ComfyUI-GGUF loader.py:', err)
+    }
+  }
+
   private extractDefaults(
     workflow: WorkflowJSON,
     positiveNodeId: number | null,
@@ -156,8 +208,6 @@ export class WorkflowManager {
     const isImg2Img = !!params.imagePath
     const hasLora = !!params.loraName
 
-    // When no LoRA selected, skip LoraLoader node entirely
-    // The input resolution code below will trace through skipped nodes
     if (!hasLora) {
       const loraNode = nodes.find(n => n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly')
       if (loraNode) {
@@ -222,6 +272,16 @@ export class WorkflowManager {
         }
         case 'UnetLoaderGGUF': {
           widgetValues[0] = params.modelName?.endsWith('.gguf') ? params.modelName : (node.widgets_values?.[0] as string ?? params.modelName)
+          widgetValues[1] = 'default' // dequant_dtype
+          widgetValues[2] = 'default' // patch_dtype
+          widgetValues[3] = false     // patch_on_device
+          break
+        }
+        case 'CLIPLoaderGGUF': {
+          const clipName = widgetValues[0] as string
+          if (clipName?.toLowerCase().includes('qwen')) {
+            widgetValues[1] = 'qwen_image'
+          }
           break
         }
         case 'SaveImage': {
@@ -244,24 +304,28 @@ export class WorkflowManager {
           if (input.link !== null) {
             const link = data.workflow.links.find(l => l && l[0] === input.link)
             if (link) {
-              const fromNodeId = link[1]
-              const fromSlot = link[2]
-              // If link comes from a skipped node (LoraLoader), trace back to its source
-              if (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
+              let fromNodeId = link[1]
+              let fromSlot = link[2]
+
+              // Trace recursively through any skipped nodes (LoraLoader, ApplyKrea2NegPiP, etc.)
+              while (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
                 const skippedNode = nodes.find(n => n.id === fromNodeId)
-                // For LoraLoader: output 0=MODEL (from "model" input), output 1=CLIP (from "clip" input)
                 const inputName = fromSlot === 0 ? 'model' : 'clip'
                 const skippedInput = skippedNode?.inputs?.find(i => i.name === inputName)
                 const skippedLink = skippedInput?.link
                 if (skippedLink !== null && skippedLink !== undefined) {
                   const sourceLink = data.workflow.links.find(l => l && l[0] === skippedLink)
                   if (sourceLink) {
-                    inputs[input.name] = [String(sourceLink[1]), sourceLink[2] as number]
+                    fromNodeId = sourceLink[1]
+                    fromSlot = sourceLink[2]
+                  } else {
+                    break
                   }
+                } else {
+                  break
                 }
-              } else {
-                inputs[input.name] = [String(fromNodeId), fromSlot as number]
               }
+              inputs[input.name] = [String(fromNodeId), fromSlot as number]
             }
           } else {
             if (widgetIndex < widgetValues.length) {
@@ -273,6 +337,37 @@ export class WorkflowManager {
       }
 
       nodeEntry.inputs = inputs
+
+      // UnetLoaderGGUF outputs WANVIDEOMODEL in ComfyUI 0.26+, incompatible
+      // with standard nodes. Swap to UnetLoaderGGUFAdvanced which outputs MODEL.
+      if (node.type === 'UnetLoaderGGUF') {
+        nodeEntry.class_type = 'UnetLoaderGGUFAdvanced'
+        const ggufInputs = nodeEntry.inputs as Record<string, unknown>
+        ggufInputs.dequant_dtype = 'default'
+        ggufInputs.patch_dtype = 'default'
+        ggufInputs.patch_on_device = false
+      }
+
+      // CLIPLoaderGGUF doesn't support 'qwen3' GGUF architecture.
+      // Swap to standard CLIPLoader with safetensors model.
+      if (node.type === 'CLIPLoaderGGUF') {
+        const clipName = node.widgets_values?.[0] as string
+        if (clipName?.toLowerCase().includes('qwen3')) {
+          console.log(`[WorkflowManager] Swapping CLIPLoaderGGUF node ${node.id} (${clipName}) to CLIPLoader`)
+          nodeEntry.class_type = 'CLIPLoader'
+          const clipInputs = nodeEntry.inputs as Record<string, unknown>
+          if (typeof clipInputs.clip_name === 'string') {
+            const originalPath = clipInputs.clip_name
+            clipInputs.clip_name = mapGGUFClipToSafetensors(clipInputs.clip_name)
+            console.log(`[WorkflowManager] CLIP path: ${originalPath} -> ${clipInputs.clip_name}`)
+          }
+          if (!('device' in clipInputs)) {
+            clipInputs.device = 'default'
+          }
+          console.log('[WorkflowManager] CLIPLoaderGGUF inputs:', JSON.stringify(clipInputs))
+        }
+      }
+
       prompt[String(node.id)] = nodeEntry
     }
 

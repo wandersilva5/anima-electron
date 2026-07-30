@@ -22,7 +22,6 @@ interface ElectronAPI {
     getStatus: () => Promise<ComfyUIStatus>
     generate: (params: unknown) => Promise<GenerateResult>
     generateImprove: (params: unknown) => Promise<GenerateResult>
-    generatePose: (params: unknown) => Promise<GenerateResult>
     captionImage: (params: { imageBase64: string }) => Promise<{ text: string }>
     setUrl: (url: string) => Promise<void>
     launch: () => Promise<{ success: boolean; message: string }>

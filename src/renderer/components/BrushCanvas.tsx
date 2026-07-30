@@ -3,9 +3,7 @@ import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHand
 export interface BrushCanvasHandle {
   getMaskBase64: () => string | null
   clearMask: () => void
-  getBrushSize: () => number
   setBrushSize: (size: number) => void
-  getIsErasing: () => boolean
   setIsErasing: (erasing: boolean) => void
 }
 
@@ -66,9 +64,7 @@ export const BrushCanvas = forwardRef<BrushCanvasHandle, BrushCanvasProps>(
         ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height)
         renderOverlay()
       },
-      getBrushSize: () => brushSize,
       setBrushSize,
-      getIsErasing: () => isErasing,
       setIsErasing,
     }))
 

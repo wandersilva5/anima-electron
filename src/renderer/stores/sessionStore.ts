@@ -40,9 +40,6 @@ interface SessionState {
   refreshLoras: () => Promise<void>
   models: ModelInfo[]
   setModels: (m: ModelInfo[]) => void
-  refreshModels: () => Promise<void>
-  comfyUrl: string
-  setComfyUrl: (url: string) => void
   theme: 'dark' | 'light'
   toggleTheme: () => void
   generateTrigger: number
@@ -112,13 +109,6 @@ export const useSessionStore = create<SessionState>((set) => ({
     }
     return { models }
   }),
-  refreshModels: async () => {
-    const state = useSessionStore.getState()
-    const models = await window.electronAPI.models.list()
-    state.setModels(models)
-  },
-  comfyUrl: 'http://127.0.0.1:8188',
-  setComfyUrl: (comfyUrl) => set({ comfyUrl }),
   theme: (localStorage.getItem('anima-theme') as 'dark' | 'light') || 'dark',
   toggleTheme: () =>
     set((s) => {

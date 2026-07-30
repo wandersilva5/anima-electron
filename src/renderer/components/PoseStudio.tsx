@@ -257,7 +257,6 @@ export function PoseStudio() {
   const [lineThickness, setLineThickness] = useState(3)
   const [safeZone, setSafeZone] = useState(100)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const profile = MODEL_PROFILES[selectedModel]
 
@@ -566,7 +565,6 @@ export function PoseStudio() {
 
           {/* Canvas */}
           <div
-            ref={containerRef}
             className="relative rounded-2xl overflow-hidden bg-surface-secondary shadow-2xl border border-border"
           >
             <canvas

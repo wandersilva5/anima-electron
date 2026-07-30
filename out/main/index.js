@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join, sep } from "path";
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync, rmSync } from "fs";
+import { readFileSync, existsSync, writeFileSync, readdirSync, mkdirSync, statSync, rmSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
@@ -73,19 +73,50 @@ class ComfyUIClient {
     return res.json();
   }
   async waitForResult(promptId, onProgress, timeoutMs = 3e5) {
-    const ws = onProgress ? this.connectProgress(promptId, onProgress) : null;
+    let wsError = null;
+    const ws = onProgress ? this.connectProgress(promptId, onProgress, (err) => {
+      wsError = err;
+    }) : null;
     const startTime = Date.now();
     const pollInterval = 1e3;
     try {
       while (Date.now() - startTime < timeoutMs) {
+        if (wsError) {
+          throw new Error(wsError);
+        }
         const res = await fetch(`${this.baseUrl}/history/${promptId}`);
         if (res.ok) {
           const data = await res.json();
           const item = data[promptId];
           if (item) {
-            if (item.status.completed) {
-              if (item.status.status_str === "error") {
-                throw new Error(`ComfyUI execution error for prompt ${promptId}`);
+            const statusStr = item.status?.status_str;
+            if (statusStr === "error" || item.status?.completed) {
+              if (statusStr === "error") {
+                console.error("[ComfyUIClient] Erro retornado no histórico:", JSON.stringify(item.status));
+                const messages = item.status?.messages;
+                let details = "";
+                if (Array.isArray(messages)) {
+                  for (const msg of messages) {
+                    if (Array.isArray(msg) && msg[1]) {
+                      const msgType = String(msg[0] ?? "").toLowerCase();
+                      const info = msg[1];
+                      if (msgType.includes("error") || typeof info === "object") {
+                        const nodeType = info.node_type ? `${info.node_type}` : "";
+                        const nodeId = info.node_id ? ` (#${info.node_id})` : "";
+                        const excMsg = info.exception_message || info.exception_type || info.message;
+                        if (excMsg) {
+                          details += ` [Nó: ${nodeType}${nodeId}]: ${excMsg}`;
+                        } else if (typeof info === "string") {
+                          details += ` ${info}`;
+                        }
+                      }
+                    }
+                  }
+                }
+                if (!details && item.status?.exception_message) {
+                  details = `: ${item.status.exception_message}`;
+                }
+                throw new Error(`Erro na execução do ComfyUI${details || ": Verifique se os modelos e nós exigidos estão instalados."}`);
               }
               const images = [];
               for (const nodeId of Object.keys(item.outputs)) {
@@ -109,7 +140,7 @@ class ComfyUIClient {
         }
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
       }
-      throw new Error("Timeout waiting for ComfyUI result");
+      throw new Error("Timeout esperando resultado do ComfyUI");
     } finally {
       ws?.close();
     }
@@ -230,7 +261,7 @@ class ComfyUIClient {
     console.warn("[ComfyUIClient] Nenhum nó de captioning produziu resultado");
     return { text: "" };
   }
-  connectProgress(promptId, onProgress) {
+  connectProgress(promptId, onProgress, onError) {
     const wsUrl = this.baseUrl.replace(/^http/, "ws") + "/ws";
     const ws = new WebSocket(wsUrl);
     ws.on("open", () => {
@@ -241,6 +272,10 @@ class ComfyUIClient {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "progress" && msg.data?.prompt_id === promptId) {
           onProgress(msg.data.value, msg.data.max);
+        } else if (msg.type === "execution_error" && msg.data?.prompt_id === promptId) {
+          const d = msg.data;
+          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${d.exception_message || d.exception_type}`;
+          onError?.(errStr);
         }
       } catch {
       }
@@ -386,6 +421,21 @@ const MODEL_PROFILES = {
     }
   }
 };
+function mapGGUFClipToSafetensors(ggufPath) {
+  const knownMappings = {
+    "Qwen3-4B-Q6_K.gguf": "qwen\\qwen3_4b_fp8_scaled.safetensors",
+    "Qwen3-4B-Q8_0.gguf": "qwen\\qwen3_4b_fp8_scaled.safetensors",
+    "Qwen3-4B-Q4_K_M.gguf": "qwen\\qwen3_4b_fp8_scaled.safetensors",
+    "Qwen3-4B-Q4_K_S.gguf": "qwen\\qwen3_4b_fp8_scaled.safetensors"
+  };
+  const filename = ggufPath.split("\\").pop() || ggufPath;
+  if (knownMappings[filename]) {
+    return knownMappings[filename];
+  }
+  const folder = ggufPath.includes("\\") ? ggufPath.substring(0, ggufPath.lastIndexOf("\\") + 1) : "";
+  const baseName = filename.replace(/-(?:[A-Z0-9]+_?)+\.gguf$/i, "").replace(/\.gguf$/i, "");
+  return folder + baseName + ".safetensors";
+}
 function findOriginNode(workflow, targetNodeId, inputName) {
   const node = workflow.nodes.find((n) => n.id === targetNodeId);
   if (!node || !node.inputs) return void 0;
@@ -397,8 +447,12 @@ function findOriginNode(workflow, targetNodeId, inputName) {
   return workflow.nodes.find((n) => n.id === originNodeId);
 }
 class WorkflowManager {
-  constructor(workflowsDir) {
+  constructor(workflowsDir, comfyUIPath) {
     this.workflows = {};
+    this.comfyUIPath = comfyUIPath || "";
+    if (this.comfyUIPath) {
+      this.patchGGUFPlugin();
+    }
     for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
       try {
         const filePath = join(workflowsDir, profile.workflowFile);
@@ -447,6 +501,32 @@ class WorkflowManager {
       } catch (err) {
         console.error(`[WorkflowManager] Erro ao carregar workflow para ${modelId}:`, err);
       }
+    }
+  }
+  patchGGUFPlugin() {
+    try {
+      const loaderPath = join(this.comfyUIPath, "ComfyUI", "custom_nodes", "ComfyUI-GGUF", "loader.py");
+      if (!existsSync(loaderPath)) {
+        console.warn("[WorkflowManager] ComfyUI-GGUF loader.py not found");
+        return;
+      }
+      const content = readFileSync(loaderPath, "utf-8");
+      if (content.includes("qwen3")) {
+        console.log("[WorkflowManager] ComfyUI-GGUF loader.py already supports qwen3");
+        return;
+      }
+      const patched = content.replace('"qwen2vl"', '"qwen2vl", "qwen3"').replace("'qwen2vl'", "'qwen2vl', 'qwen3'").replace(
+        /(if\s+arch\s+in\s+\{[^}]*?)(qwen2vl)([^}]*?\}:)/g,
+        '$1$2, "qwen3"$3'
+      );
+      if (patched === content) {
+        console.warn("[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (unrecognized format)");
+        return;
+      }
+      writeFileSync(loaderPath, patched, "utf-8");
+      console.log("[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support");
+    } catch (err) {
+      console.warn("[WorkflowManager] Failed to patch ComfyUI-GGUF loader.py:", err);
     }
   }
   extractDefaults(workflow, positiveNodeId, negativeNodeId) {
@@ -554,6 +634,16 @@ class WorkflowManager {
         }
         case "UnetLoaderGGUF": {
           widgetValues[0] = params.modelName?.endsWith(".gguf") ? params.modelName : node.widgets_values?.[0] ?? params.modelName;
+          widgetValues[1] = "default";
+          widgetValues[2] = "default";
+          widgetValues[3] = false;
+          break;
+        }
+        case "CLIPLoaderGGUF": {
+          const clipName = widgetValues[0];
+          if (clipName?.toLowerCase().includes("qwen")) {
+            widgetValues[1] = "qwen_image";
+          }
           break;
         }
         case "SaveImage": {
@@ -574,9 +664,9 @@ class WorkflowManager {
           if (input.link !== null) {
             const link = data.workflow.links.find((l) => l && l[0] === input.link);
             if (link) {
-              const fromNodeId = link[1];
-              const fromSlot = link[2];
-              if (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
+              let fromNodeId = link[1];
+              let fromSlot = link[2];
+              while (fromNodeId !== null && skipNodeIds.has(fromNodeId)) {
                 const skippedNode = nodes.find((n) => n.id === fromNodeId);
                 const inputName = fromSlot === 0 ? "model" : "clip";
                 const skippedInput = skippedNode?.inputs?.find((i) => i.name === inputName);
@@ -584,12 +674,16 @@ class WorkflowManager {
                 if (skippedLink !== null && skippedLink !== void 0) {
                   const sourceLink = data.workflow.links.find((l) => l && l[0] === skippedLink);
                   if (sourceLink) {
-                    inputs[input.name] = [String(sourceLink[1]), sourceLink[2]];
+                    fromNodeId = sourceLink[1];
+                    fromSlot = sourceLink[2];
+                  } else {
+                    break;
                   }
+                } else {
+                  break;
                 }
-              } else {
-                inputs[input.name] = [String(fromNodeId), fromSlot];
               }
+              inputs[input.name] = [String(fromNodeId), fromSlot];
             }
           } else {
             if (widgetIndex < widgetValues.length) {
@@ -600,6 +694,30 @@ class WorkflowManager {
         }
       }
       nodeEntry.inputs = inputs;
+      if (node.type === "UnetLoaderGGUF") {
+        nodeEntry.class_type = "UnetLoaderGGUFAdvanced";
+        const ggufInputs = nodeEntry.inputs;
+        ggufInputs.dequant_dtype = "default";
+        ggufInputs.patch_dtype = "default";
+        ggufInputs.patch_on_device = false;
+      }
+      if (node.type === "CLIPLoaderGGUF") {
+        const clipName = node.widgets_values?.[0];
+        if (clipName?.toLowerCase().includes("qwen3")) {
+          console.log(`[WorkflowManager] Swapping CLIPLoaderGGUF node ${node.id} (${clipName}) to CLIPLoader`);
+          nodeEntry.class_type = "CLIPLoader";
+          const clipInputs = nodeEntry.inputs;
+          if (typeof clipInputs.clip_name === "string") {
+            const originalPath = clipInputs.clip_name;
+            clipInputs.clip_name = mapGGUFClipToSafetensors(clipInputs.clip_name);
+            console.log(`[WorkflowManager] CLIP path: ${originalPath} -> ${clipInputs.clip_name}`);
+          }
+          if (!("device" in clipInputs)) {
+            clipInputs.device = "default";
+          }
+          console.log("[WorkflowManager] CLIPLoaderGGUF inputs:", JSON.stringify(clipInputs));
+        }
+      }
       prompt[String(node.id)] = nodeEntry;
     }
     if (params.poseData) {
@@ -887,7 +1005,7 @@ function setupIPC() {
   const settings = settingsManager.get();
   comfyClient = new ComfyUIClient("http://127.0.0.1:8188");
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath);
-  workflowManager = new WorkflowManager(join(__dirname, "../../workflows"));
+  workflowManager = new WorkflowManager(join(__dirname, "../../workflows"), settings.comfyUIPath);
   loraScanner = new LoraScanner(settingsManager);
   modelScanner = new ModelScanner(settingsManager);
   ipcMain.handle("comfyui:status", async () => {
@@ -1085,57 +1203,6 @@ function setupIPC() {
     const result = await comfyClient.captionImage(inputFilename);
     console.log("[Anima] Caption gerado:", result.text ? result.text.slice(0, 100) + "..." : "vazio");
     return result;
-  });
-  ipcMain.handle("comfyui:generatePose", async (_event, params) => {
-    console.log("[Anima] Iniciando geração com pose...");
-    console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
-    console.log("[Anima] Pose data:", params.poseData ? "presente" : "ausente");
-    const prompt = workflowManager.buildPrompt(params);
-    console.log("[Anima] Prompt construído, nós:", Object.keys(prompt).length);
-    const response = await comfyClient.sendPrompt(prompt);
-    console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
-    if (Object.keys(response.node_errors ?? {}).length > 0) {
-      console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
-      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
-    }
-    const images = await comfyClient.waitForResult(
-      response.prompt_id,
-      (current, max) => {
-        mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
-      }
-    );
-    console.log(`[Anima] Geração com pose concluída, ${images.length} imagem(ns)`);
-    if (images.length === 0) {
-      throw new Error("ComfyUI não retornou imagens");
-    }
-    const historyBaseDir = join(app.getPath("userData"), "history");
-    const historyDir = join(historyBaseDir, response.prompt_id);
-    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
-    try {
-      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true });
-      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true });
-      savedImages = [];
-      for (const img of images) {
-        const now = /* @__PURE__ */ new Date();
-        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-        const prefix = params.filenamePrefix || "anima-pose";
-        const ext = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
-        const newFilename = `[${prefix}][${timestamp}].${ext}`;
-        const imgPath = join(historyDir, newFilename);
-        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
-        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
-        const metadata = {
-          params,
-          filename: newFilename,
-          timestamp: Date.now()
-        };
-        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-      }
-      console.log(`[Anima] Imagens salvas em: ${historyDir}`);
-    } catch (err) {
-      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
-    }
-    return { promptId: response.prompt_id, images: savedImages };
   });
   ipcMain.handle("loras:list", async (_event, subfolder) => {
     const loras = loraScanner.scan(subfolder);
