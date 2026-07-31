@@ -1,9 +1,8 @@
-import { useState, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
-import { Sparkles, Shuffle, RefreshCw, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
-import { SafeImage } from './SafeImage'
-import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
+import { Sparkles, Shuffle } from 'lucide-react'
+import { MODEL_PROFILES } from '../../shared/modelProfiles'
+import { ModelSidebar } from './ModelSidebar'
 
 const ASPECT_RATIOS = [
   { label: '1:1', width: 1152, height: 1152 },
@@ -19,79 +18,27 @@ export function PromptPanel() {
     (ar) => ar.width === params.width && ar.height === params.height
   )
   const { generate, error } = useGenerator()
-  const [modelsOpen, setModelsOpen] = useState(false)
-  const [lorasOpen, setLorasOpen] = useState(false)
-  const [refreshingLoras, setRefreshingLoras] = useState(false)
-  const [lorasRefreshed, setLorasRefreshed] = useState(false)
-  const [loraSearch, setLoraSearch] = useState('')
-  const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const profile = MODEL_PROFILES[params.diffusionModel]
-
-  const filteredModels = models.filter((model) => {
-    const name = model.name.toLowerCase()
-    if (params.diffusionModel === 'anima') {
-      return name.includes('anima')
-    } else if (params.diffusionModel === 'krea2') {
-      return name.includes('krea') || name.includes('krea2') || name === 'krea2_turbo_fp8_scaled.safetensors'
-    } else if (params.diffusionModel === 'z-image') {
-      return name.includes('z-image') || name.includes('z_image')
-    }
-    return true
-  })
-
-  const filteredLoras = loras.filter((lora) =>
-    lora.name.toLowerCase().includes(loraSearch.toLowerCase())
-  )
-
-  const handleRefreshLoras = useCallback(async () => {
-    if (refreshingLoras) return
-    setRefreshingLoras(true)
-    try {
-      await refreshLoras()
-      setLorasRefreshed(true)
-      clearTimeout(loraRefreshTimer.current)
-      loraRefreshTimer.current = setTimeout(() => setLorasRefreshed(false), 1500)
-    } finally {
-      setRefreshingLoras(false)
-    }
-  }, [refreshLoras, refreshingLoras])
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 space-y-4 overflow-y-auto">
-        {/* Seletor de Modelo de Difusão */}
-        <div>
-          <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-            Modelo de Difusão
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {MODEL_IDS.map((id) => {
-              const prof = MODEL_PROFILES[id]
-              const isSelected = params.diffusionModel === id
-              return (
-                <button
-                  key={id}
-                  onClick={() => params.setDiffusionModel(id)}
-                  className={`
-                    flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
-                    ${isSelected
-                      ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
-                      : 'border-border bg-surface hover:border-text-muted text-text-secondary'
-                    }
-                  `}
-                >
-                  <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
-                    {prof.label}
-                  </span>
-                  <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
-                    {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : 'GGUF Flux'}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
+        <ModelSidebar
+          diffusionModel={params.diffusionModel}
+          onDiffusionModelChange={params.setDiffusionModel}
+          modelName={params.modelName}
+          onModelChange={params.setModel}
+          models={models}
+          loraName={params.loraName}
+          onLoraChange={(name) => params.setLora(name)}
+          loras={loras}
+          loraStrengthModel={params.loraStrengthModel}
+          loraStrengthClip={params.loraStrengthClip}
+          onLoraStrengthModelChange={(v) => params.setLora(params.loraName, v, undefined)}
+          onLoraStrengthClipChange={(v) => params.setLora(params.loraName, undefined, v)}
+          refreshLorasFn={refreshLoras}
+        />
 
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
@@ -120,65 +67,6 @@ export function PromptPanel() {
             />
           </div>
         )}
-
-        <div>
-          <button
-            onClick={() => setModelsOpen(!modelsOpen)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 w-full text-left"
-          >
-            {modelsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            Arquivo do Checkpoint (UNET)
-          </button>
-
-          {modelsOpen && (
-            <div>
-              {filteredModels.length === 0 ? (
-                <p className="text-xs text-text-muted">Nenhum checkpoint correspondente encontrado</p>
-              ) : (
-                <div className="max-h-48 overflow-y-auto custom-scroll">
-                  <div className="grid grid-cols-3 gap-2">
-                    {filteredModels.map((model) => {
-                      const displayName = model.name.replace(/\.(safetensors|ckpt)$/, '').split(/[/\\]/).pop() ?? model.name
-                      const isSelected = params.modelName === model.name
-                      return (
-                        <button
-                          key={model.name}
-                          onClick={() => params.setModel(model.name)}
-                          title={displayName}
-                          className={`
-                            relative aspect-square rounded-xl border-2 overflow-hidden
-                            transition-all
-                            ${isSelected
-                              ? 'border-accent ring-1 ring-accent'
-                              : 'border-border hover:border-text-muted'
-                            }
-                          `}
-                        >
-                          {model.previewUrl ? (
-                            <SafeImage
-                              path={model.previewUrl}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
-                              <span className="text-[10px] text-text-muted text-center px-1 leading-tight">
-                                {displayName.slice(0, 18)}
-                              </span>
-                            </div>
-                          )}
-                          {isSelected && (
-                            <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
 
         <div className="space-y-3">
           <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
@@ -283,141 +171,6 @@ export function PromptPanel() {
           </div>
         </div>
 
-        <div>
-          <div className="flex items-center gap-1.5 mb-2">
-            <button
-              onClick={() => setLorasOpen(!lorasOpen)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider text-left flex-1"
-            >
-              {lorasOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              LoRA
-              {params.loraName && <span className="ml-1 text-accent font-normal normal-case">(ativo)</span>}
-            </button>
-            <button
-              onClick={handleRefreshLoras}
-              disabled={refreshingLoras}
-              className={`
-                p-1 rounded-lg shrink-0 transition-all duration-300
-                ${lorasRefreshed
-                  ? 'bg-success/20 text-success'
-                  : refreshingLoras
-                    ? 'bg-accent/10 text-accent'
-                    : 'hover:bg-surface-tertiary text-text-muted hover:text-text-primary'
-                }
-              `}
-              title="Atualizar lista de LoRAs"
-            >
-              {lorasRefreshed ? (
-                <Check size={12} className="animate-[ping_0.3s_ease-out]" />
-              ) : (
-                <RefreshCw size={12} className={refreshingLoras ? 'animate-spin' : ''} />
-              )}
-            </button>
-          </div>
-
-          {lorasOpen && (
-            <div>
-              <div className="relative mb-2">
-                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
-                <input
-                  type="text"
-                  value={loraSearch}
-                  onChange={(e) => setLoraSearch(e.target.value)}
-                  placeholder="Buscar LoRA..."
-                  className="w-full bg-surface rounded-lg border border-border pl-6 pr-7 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
-                />
-                {loraSearch && (
-                  <button
-                    onClick={() => setLoraSearch('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-              {filteredLoras.length === 0 ? (
-                <p className="text-xs text-text-muted">Nenhum LoRA encontrado</p>
-              ) : (
-                <div className="max-h-60 overflow-y-auto custom-scroll">
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      onClick={() => params.setLora(null)}
-                      className={`
-                        aspect-square rounded-xl border-2 flex items-center justify-center text-xs
-                        transition-all
-                        ${!params.loraName
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
-                        }
-                      `}
-                    >
-                      None
-                    </button>
-                    {filteredLoras.map((lora) => {
-                      const displayName = lora.name.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? lora.name
-                      return (
-                        <button
-                          key={lora.name}
-                          onClick={() => params.setLora(lora.name)}
-                          title={displayName}
-                          className={`
-                            relative aspect-square rounded-xl border-2 overflow-hidden
-                            transition-all group
-                            ${params.loraName === lora.name
-                              ? 'border-accent ring-1 ring-accent'
-                              : 'border-border hover:border-text-muted'
-                            }
-                          `}
-                        >
-                          {lora.previewUrl ? (
-                            <SafeImage
-                              path={lora.previewUrl}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
-                              <span className="text-[8px] text-text-muted text-center px-1 leading-tight">
-                                {displayName.slice(0, 15)}
-                              </span>
-                            </div>
-                          )}
-                          {params.loraName === lora.name && (
-                            <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {params.loraName && (
-                <div className="mt-3 space-y-2">
-                  <SliderField
-                    label="Model Strength"
-                    value={params.loraStrengthModel}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(v) => params.setLora(params.loraName, v, undefined)}
-                  />
-                  {profile.hasLoraClipStrength && (
-                    <SliderField
-                      label="CLIP Strength"
-                      value={params.loraStrengthClip}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      onChange={(v) => params.setLora(params.loraName, undefined, v)}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
         {error && (
           <div className="p-3 rounded-lg bg-error/10 border border-error/30 text-error text-xs">
             {error}
@@ -439,7 +192,7 @@ export function PromptPanel() {
             <div className="w-full h-1.5 bg-surface-tertiary rounded-full overflow-hidden">
               <div
                 className="h-full bg-accent rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${(progress.current / progress.max) * 100}%` }}
+                style={{ width: `${progress.max > 0 ? (progress.current / progress.max) * 100 : 0}%` }}
               />
             </div>
           </div>

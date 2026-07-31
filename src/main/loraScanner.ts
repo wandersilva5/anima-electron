@@ -1,5 +1,5 @@
 import { readdirSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, sep } from 'path'
 import type { LoraInfo } from '@shared/types'
 import type { SettingsManager } from './settings'
 
@@ -32,11 +32,11 @@ export class LoraScanner {
     for (const entry of entries) {
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
-        const subPrefix = prefix ? `${prefix}\\${entry.name}` : entry.name
+        const subPrefix = prefix ? `${prefix}${sep}${entry.name}` : entry.name
         results.push(...this.scanRecursive(fullPath, subPrefix, subfolder))
-      } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt')) {
-        const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name
-        const loraName = subfolder ? `${subfolder}\\${relativeName}` : relativeName
+      } else if (entry.name.endsWith('.safetensors') || entry.name.endsWith('.ckpt') || entry.name.endsWith('.gguf')) {
+        const relativeName = prefix ? `${prefix}${sep}${entry.name}` : entry.name
+        const loraName = subfolder ? `${subfolder}${sep}${relativeName}` : relativeName
         results.push({
           name: loraName,
           path: fullPath,
@@ -49,7 +49,7 @@ export class LoraScanner {
   }
 
   private findPreview(filename: string, dir: string): string | undefined {
-    const baseName = filename.replace(/\.(safetensors|ckpt)$/, '')
+    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, '')
     const exts = ['.png', '.jpg', '.jpeg', '.webp']
     const loraDir = this.settingsManager.resolvedLorasPath
     const paths = [

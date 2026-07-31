@@ -61,7 +61,7 @@ export class ModelScanner {
   }
 
   private findPreview(filename: string, dir: string, baseDir: string): string | undefined {
-    const baseName = filename.replace(/\.(safetensors|ckpt)$/, '')
+    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, '')
     const exts = ['.png', '.jpg', '.jpeg', '.webp']
     const paths = [
       ...exts.map(e => join(dir, 'previews', `${baseName}${e}`)),

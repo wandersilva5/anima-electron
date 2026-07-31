@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Paintbrush, X, Search, RefreshCw, Check, ChevronDown, ChevronUp, ArrowLeftRight } from 'lucide-react'
-import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
+import { Upload, Wand2, Trash2, Paintbrush, X, ArrowLeftRight } from 'lucide-react'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
-import { SafeImage } from './SafeImage'
+import { ModelSidebar } from './ModelSidebar'
 
 export function ImageImprove() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
@@ -24,48 +23,22 @@ export function ImageImprove() {
   const [brushMode, setBrushMode] = useState(false)
   const [showingResult, setShowingResult] = useState(true)
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 })
-  const [lorasOpen, setLorasOpen] = useState(false)
-  const [modelsOpen, setModelsOpen] = useState(false)
-  const [loraSearch, setLoraSearch] = useState('')
-  const [refreshingLoras, setRefreshingLoras] = useState(false)
-  const [lorasRefreshed, setLorasRefreshed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const brushRef = useRef<BrushCanvasHandle>(null)
-  const loraRefreshTimer = useRef<ReturnType<typeof setTimeout>>()
-
-  const profile = MODEL_PROFILES[selectedModel]
-
-  const filteredModels = models.filter((model) => {
-    const name = model.name.toLowerCase()
-    if (selectedModel === 'anima') return name.includes('anima')
-    if (selectedModel === 'krea2') return name.includes('krea') || name.includes('krea2')
-    if (selectedModel === 'z-image') return name.includes('z-image') || name.includes('z_image')
-    return true
-  })
-
-  const filteredLoras = loras.filter((lora) =>
-    lora.name.toLowerCase().includes(loraSearch.toLowerCase())
-  )
 
   // Auto-select first compatible model
   useEffect(() => {
-    if (filteredModels.length > 0 && !filteredModels.some(m => m.name === selectedCheckpoint)) {
-      setSelectedCheckpoint(filteredModels[0].name)
+    const compatible = models.filter((model) => {
+      const name = model.name.toLowerCase()
+      if (selectedModel === 'anima') return name.includes('anima')
+      if (selectedModel === 'krea2') return name.includes('krea') || name.includes('krea2')
+      if (selectedModel === 'z-image') return name.includes('z-image') || name.includes('z_image')
+      return true
+    })
+    if (compatible.length > 0 && !compatible.some(m => m.name === selectedCheckpoint)) {
+      setSelectedCheckpoint(compatible[0].name)
     }
-  }, [filteredModels, selectedCheckpoint])
-
-  const handleRefreshLoras = useCallback(async () => {
-    if (refreshingLoras) return
-    setRefreshingLoras(true)
-    try {
-      await refreshLoras()
-      setLorasRefreshed(true)
-      clearTimeout(loraRefreshTimer.current)
-      loraRefreshTimer.current = setTimeout(() => setLorasRefreshed(false), 1500)
-    } finally {
-      setRefreshingLoras(false)
-    }
-  }, [refreshLoras, refreshingLoras])
+  }, [models, selectedModel, selectedCheckpoint])
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -335,249 +308,21 @@ export function ImageImprove() {
       <aside className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-border bg-surface-secondary overflow-y-auto shrink-0 max-h-[40vh] lg:max-h-none">
         <div className="flex flex-col h-full">
           <div className="p-4 space-y-4 overflow-y-auto">
-            {/* Diffusion model selector */}
-            <div>
-              <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-                Modelo de Difusão
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {MODEL_IDS.map((id) => {
-                  const prof = MODEL_PROFILES[id]
-                  const isSelected = selectedModel === id
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setSelectedModel(id)}
-                      className={`
-                        flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
-                        ${isSelected
-                          ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
-                          : 'border-border bg-surface hover:border-text-muted text-text-secondary'
-                        }
-                      `}
-                    >
-                      <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
-                        {prof.label}
-                      </span>
-                      <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
-                        {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : 'GGUF Flux'}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Checkpoint selector */}
-            <div>
-              <button
-                onClick={() => setModelsOpen(!modelsOpen)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 w-full text-left"
-              >
-                {modelsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                Checkpoint (UNET)
-                {selectedCheckpoint && <span className="ml-1 text-accent font-normal normal-case">({selectedCheckpoint.split(/[/\\]/).pop()?.replace(/\.(safetensors|ckpt|gguf)$/, '')})</span>}
-              </button>
-
-              {modelsOpen && (
-                <div>
-                  {filteredModels.length === 0 ? (
-                    <p className="text-xs text-text-muted">Nenhum checkpoint encontrado</p>
-                  ) : (
-                    <div className="max-h-48 overflow-y-auto custom-scroll">
-                      <div className="grid grid-cols-3 gap-2">
-                        {filteredModels.map((model) => {
-                          const displayName = model.name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? model.name
-                          const isSelected = selectedCheckpoint === model.name
-                          return (
-                            <button
-                              key={model.name}
-                              onClick={() => setSelectedCheckpoint(model.name)}
-                              title={displayName}
-                              className={`
-                                relative aspect-square rounded-xl border-2 overflow-hidden
-                                transition-all
-                                ${isSelected
-                                  ? 'border-accent ring-1 ring-accent'
-                                  : 'border-border hover:border-text-muted'
-                                }
-                              `}
-                            >
-                              {model.previewUrl ? (
-                                <SafeImage
-                                  path={model.previewUrl}
-                                  alt=""
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
-                                  <span className="text-[10px] text-text-muted text-center px-1 leading-tight">
-                                    {displayName.slice(0, 18)}
-                                  </span>
-                                </div>
-                              )}
-                              {isSelected && (
-                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* LoRA selector */}
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <button
-                  onClick={() => setLorasOpen(!lorasOpen)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider text-left flex-1"
-                >
-                  {lorasOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  LoRA
-                  {selectedLora && <span className="ml-1 text-accent font-normal normal-case">(ativo)</span>}
-                </button>
-                <button
-                  onClick={handleRefreshLoras}
-                  disabled={refreshingLoras}
-                  className={`
-                    p-1 rounded-lg shrink-0 transition-all duration-300
-                    ${lorasRefreshed
-                      ? 'bg-success/20 text-success'
-                      : refreshingLoras
-                        ? 'bg-accent/10 text-accent'
-                        : 'hover:bg-surface-tertiary text-text-muted hover:text-text-primary'
-                    }
-                  `}
-                  title="Atualizar lista de LoRAs"
-                >
-                  {lorasRefreshed ? (
-                    <Check size={12} className="animate-[ping_0.3s_ease-out]" />
-                  ) : (
-                    <RefreshCw size={12} className={refreshingLoras ? 'animate-spin' : ''} />
-                  )}
-                </button>
-              </div>
-
-              {lorasOpen && (
-                <div>
-                  <div className="relative mb-2">
-                    <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <input
-                      type="text"
-                      value={loraSearch}
-                      onChange={(e) => setLoraSearch(e.target.value)}
-                      placeholder="Buscar LoRA..."
-                      className="w-full bg-surface rounded-lg border border-border pl-6 pr-7 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
-                    />
-                    {loraSearch && (
-                      <button
-                        onClick={() => setLoraSearch('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                  {filteredLoras.length === 0 ? (
-                    <p className="text-xs text-text-muted">Nenhum LoRA encontrado</p>
-                  ) : (
-                    <div className="max-h-60 overflow-y-auto custom-scroll">
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          onClick={() => setSelectedLora(null)}
-                          className={`
-                            aspect-square rounded-xl border-2 flex items-center justify-center text-xs
-                            transition-all
-                            ${!selectedLora
-                              ? 'border-accent bg-accent/10 text-accent'
-                              : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
-                            }
-                          `}
-                        >
-                          None
-                        </button>
-                        {filteredLoras.map((lora) => {
-                          const displayName = lora.name.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? lora.name
-                          return (
-                            <button
-                              key={lora.name}
-                              onClick={() => setSelectedLora(lora.name)}
-                              title={displayName}
-                              className={`
-                                relative aspect-square rounded-xl border-2 overflow-hidden
-                                transition-all group
-                                ${selectedLora === lora.name
-                                  ? 'border-accent ring-1 ring-accent'
-                                  : 'border-border hover:border-text-muted'
-                                }
-                              `}
-                            >
-                              {lora.previewUrl ? (
-                                <SafeImage
-                                  path={lora.previewUrl}
-                                  alt=""
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
-                                  <span className="text-[8px] text-text-muted text-center px-1 leading-tight">
-                                    {displayName.slice(0, 15)}
-                                  </span>
-                                </div>
-                              )}
-                              {selectedLora === lora.name && (
-                                <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedLora && (
-                    <div className="mt-3 space-y-2">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-text-muted">Model Strength</label>
-                          <span className="text-xs text-text-secondary font-mono">{loraStrengthModel.toFixed(2)}</span>
-                        </div>
-                        <input
-                          type="range"
-                          value={loraStrengthModel}
-                          min={0}
-                          max={2}
-                          step={0.05}
-                          onChange={(e) => setLoraStrengthModel(Number(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
-                      {profile.hasLoraClipStrength && (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <label className="text-xs text-text-muted">CLIP Strength</label>
-                            <span className="text-xs text-text-secondary font-mono">{loraStrengthClip.toFixed(2)}</span>
-                          </div>
-                          <input
-                            type="range"
-                            value={loraStrengthClip}
-                            min={0}
-                            max={2}
-                            step={0.05}
-                            onChange={(e) => setLoraStrengthClip(Number(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <ModelSidebar
+              diffusionModel={selectedModel}
+              onDiffusionModelChange={setSelectedModel}
+              modelName={selectedCheckpoint}
+              onModelChange={setSelectedCheckpoint}
+              models={models}
+              loraName={selectedLora}
+              onLoraChange={setSelectedLora}
+              loras={loras}
+              loraStrengthModel={loraStrengthModel}
+              loraStrengthClip={loraStrengthClip}
+              onLoraStrengthModelChange={setLoraStrengthModel}
+              onLoraStrengthClipChange={setLoraStrengthClip}
+              refreshLorasFn={refreshLoras}
+            />
 
             {/* Prompt */}
             <div>

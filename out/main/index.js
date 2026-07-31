@@ -813,11 +813,11 @@ class LoraScanner {
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        const subPrefix = prefix ? `${prefix}\\${entry.name}` : entry.name;
+        const subPrefix = prefix ? `${prefix}${sep}${entry.name}` : entry.name;
         results.push(...this.scanRecursive(fullPath, subPrefix, subfolder));
-      } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt")) {
-        const relativeName = prefix ? `${prefix}\\${entry.name}` : entry.name;
-        const loraName = subfolder ? `${subfolder}\\${relativeName}` : relativeName;
+      } else if (entry.name.endsWith(".safetensors") || entry.name.endsWith(".ckpt") || entry.name.endsWith(".gguf")) {
+        const relativeName = prefix ? `${prefix}${sep}${entry.name}` : entry.name;
+        const loraName = subfolder ? `${subfolder}${sep}${relativeName}` : relativeName;
         results.push({
           name: loraName,
           path: fullPath,
@@ -828,7 +828,7 @@ class LoraScanner {
     return results;
   }
   findPreview(filename, dir) {
-    const baseName = filename.replace(/\.(safetensors|ckpt)$/, "");
+    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
     const exts = [".png", ".jpg", ".jpeg", ".webp"];
     const loraDir = this.settingsManager.resolvedLorasPath;
     const paths = [
@@ -888,7 +888,7 @@ class ModelScanner {
     return results;
   }
   findPreview(filename, dir, baseDir) {
-    const baseName = filename.replace(/\.(safetensors|ckpt)$/, "");
+    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
     const exts = [".png", ".jpg", ".jpeg", ".webp"];
     const paths = [
       ...exts.map((e) => join(dir, "previews", `${baseName}${e}`)),
@@ -954,8 +954,83 @@ let workflowManager;
 let loraScanner;
 let modelScanner;
 let statusPollInterval = null;
+let statusPollActive = false;
+function buildTimestamp() {
+  const now = /* @__PURE__ */ new Date();
+  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+}
+function getImageExt(filename) {
+  if (filename.endsWith(".png")) return "png";
+  if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) return "jpg";
+  return "png";
+}
+function saveImagesToHistory(promptId, images, params, prefix = "anima") {
+  const historyBaseDir = join(app.getPath("userData"), "history");
+  const historyDir = join(historyBaseDir, promptId);
+  const savedImages = [];
+  try {
+    if (!existsSync(historyBaseDir)) {
+      mkdirSync(historyBaseDir, { recursive: true });
+      console.log(`[Anima] Pasta de histórico criada: ${historyBaseDir}`);
+    }
+    if (!existsSync(historyDir)) {
+      mkdirSync(historyDir, { recursive: true });
+    }
+    let metadata = null;
+    for (const img of images) {
+      const timestamp = buildTimestamp();
+      const ext = getImageExt(img.filename);
+      const newFilename = `[${prefix}][${timestamp}].${ext}`;
+      const imgPath = join(historyDir, newFilename);
+      writeFileSync(imgPath, Buffer.from(img.data, "base64"));
+      savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
+      metadata = { params, filename: newFilename, timestamp: Date.now() };
+    }
+    if (metadata) {
+      writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
+    }
+    console.log(`[Anima] Imagens salvas em: ${historyDir}`);
+  } catch (err) {
+    console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
+  }
+  return savedImages;
+}
+async function uploadImageToComfyUI(base64, filename, comfyInputDir, baseUrl) {
+  const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
+  const imageBuffer = Buffer.from(imageData, "base64");
+  const destPath = join(comfyInputDir, filename);
+  try {
+    writeFileSync(destPath, imageBuffer);
+    console.log(`[Anima] Arquivo salvo em: ${destPath}`);
+  } catch {
+    console.warn("[Anima] Não foi possível salvar localmente, tentando upload via API...");
+    const ext = filename.split(".").pop() || "png";
+    const blob = new Blob([imageBuffer], { type: `image/${ext}` });
+    const formData = new FormData();
+    formData.append("image", blob, filename);
+    formData.append("type", "input");
+    const uploadRes = await fetch(`${baseUrl}/upload/image`, { method: "POST", body: formData });
+    if (!uploadRes.ok) {
+      throw new Error(`Falha ao enviar arquivo para ComfyUI: ${uploadRes.status}`);
+    }
+    console.log("[Anima] Upload realizado com sucesso");
+  }
+}
+function isPathSafe(targetPath, allowedBase) {
+  const normalized = join(targetPath);
+  const base = join(allowedBase);
+  return normalized.startsWith(base);
+}
+function stopStatusPoll() {
+  if (statusPollInterval) {
+    clearInterval(statusPollInterval);
+    statusPollInterval = null;
+  }
+  statusPollActive = false;
+}
 function startStatusPoll() {
-  if (statusPollInterval) clearInterval(statusPollInterval);
+  if (statusPollActive) return;
+  statusPollActive = true;
   statusPollInterval = setInterval(async () => {
     const status = await comfyClient.getStatus();
     mainWindow?.webContents.send("comfyui:statusUpdate", {
@@ -1034,38 +1109,7 @@ function setupIPC() {
     if (images.length === 0) {
       throw new Error("ComfyUI não retornou imagens");
     }
-    const historyBaseDir = join(app.getPath("userData"), "history");
-    const historyDir = join(historyBaseDir, response.prompt_id);
-    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
-    try {
-      if (!existsSync(historyBaseDir)) {
-        mkdirSync(historyBaseDir, { recursive: true });
-        console.log(`[Anima] Pasta de histórico criada: ${historyBaseDir}`);
-      }
-      if (!existsSync(historyDir)) {
-        mkdirSync(historyDir, { recursive: true });
-      }
-      savedImages = [];
-      for (const img of images) {
-        const now = /* @__PURE__ */ new Date();
-        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-        const prefix = params.filenamePrefix || "anima";
-        const ext = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
-        const newFilename = `[${prefix}][${timestamp}].${ext}`;
-        const imgPath = join(historyDir, newFilename);
-        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
-        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
-        const metadata = {
-          params,
-          filename: newFilename,
-          timestamp: Date.now()
-        };
-        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-      }
-      console.log(`[Anima] Imagens salvas em: ${historyDir}`);
-    } catch (err) {
-      console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
-    }
+    const savedImages = saveImagesToHistory(response.prompt_id, images, params, params.filenamePrefix || "anima");
     return { promptId: response.prompt_id, images: savedImages };
   });
   ipcMain.handle("comfyui:generateImprove", async (_event, params) => {
@@ -1076,52 +1120,15 @@ function setupIPC() {
     }
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const baseUrl = comfyClient.getBaseUrl();
     const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/);
     const imgExt = imageMatch ? imageMatch[1] : "png";
     const inputFilename = `anima-improve-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
-    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const imageBuffer = Buffer.from(imageData, "base64");
-    const destPath = join(comfyInputDir, inputFilename);
-    let savedLocally = false;
-    try {
-      writeFileSync(destPath, imageBuffer);
-      console.log(`[Anima] Imagem salva em: ${destPath}`);
-      savedLocally = true;
-    } catch {
-      console.warn("[Anima] Não foi possível salvar localmente, tentando upload via API...");
-    }
-    if (!savedLocally) {
-      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` });
-      const formData = new FormData();
-      formData.append("image", blob, inputFilename);
-      formData.append("type", "input");
-      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: formData });
-      if (!uploadRes.ok) {
-        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`);
-      }
-      console.log("[Anima] Upload da imagem realizado com sucesso");
-    }
+    await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl);
     let maskFilename;
     if (params.maskBase64) {
       maskFilename = `anima-mask-${Date.now()}.png`;
-      const maskData = params.maskBase64.replace(/^data:image\/\w+;base64,/, "");
-      const maskBuffer = Buffer.from(maskData, "base64");
-      const maskDestPath = join(comfyInputDir, maskFilename);
-      try {
-        writeFileSync(maskDestPath, maskBuffer);
-        console.log(`[Anima] Máscara salva em: ${maskDestPath}`);
-      } catch {
-        console.warn("[Anima] Não foi possível salvar máscara localmente, tentando upload via API...");
-        const maskBlob = new Blob([maskBuffer], { type: "image/png" });
-        const maskFormData = new FormData();
-        maskFormData.append("image", maskBlob, maskFilename);
-        maskFormData.append("type", "input");
-        const maskUploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: maskFormData });
-        if (!maskUploadRes.ok) {
-          throw new Error(`Falha ao enviar máscara para ComfyUI: ${maskUploadRes.status}`);
-        }
-        console.log("[Anima] Upload da máscara realizado com sucesso");
-      }
+      await uploadImageToComfyUI(params.maskBase64, maskFilename, comfyInputDir, baseUrl);
     }
     const improveParams = {
       ...params,
@@ -1144,32 +1151,7 @@ function setupIPC() {
       }
     );
     console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
-    const historyBaseDir = join(app.getPath("userData"), "history");
-    const historyDir = join(historyBaseDir, response.prompt_id);
-    let savedImages = images.map((img) => ({ ...img, filePath: "" }));
-    try {
-      if (!existsSync(historyBaseDir)) mkdirSync(historyBaseDir, { recursive: true });
-      if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true });
-      savedImages = [];
-      for (const img of images) {
-        const now = /* @__PURE__ */ new Date();
-        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-        const prefix = params.filenamePrefix || "anima-improve";
-        const ext2 = img.filename.endsWith(".png") ? "png" : img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
-        const newFilename = `[${prefix}][${timestamp}].${ext2}`;
-        const imgPath = join(historyDir, newFilename);
-        writeFileSync(imgPath, Buffer.from(img.data, "base64"));
-        savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
-        const metadata = {
-          params: improveParams,
-          filename: newFilename,
-          timestamp: Date.now()
-        };
-        writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-      }
-    } catch (err) {
-      console.warn("[Anima] Erro ao salvar histórico:", err);
-    }
+    const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
     return { promptId: response.prompt_id, images: savedImages };
   });
   ipcMain.handle("comfyui:captionImage", async (_event, params) => {
@@ -1179,27 +1161,11 @@ function setupIPC() {
     }
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const baseUrl = comfyClient.getBaseUrl();
     const imageMatch = params.imageBase64.match(/^data:image\/(\w+);base64,/);
     const imgExt = imageMatch ? imageMatch[1] : "png";
     const inputFilename = `anima-caption-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
-    const imageData = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const imageBuffer = Buffer.from(imageData, "base64");
-    const destPath = join(comfyInputDir, inputFilename);
-    try {
-      writeFileSync(destPath, imageBuffer);
-      console.log(`[Anima] Imagem para caption salva em: ${destPath}`);
-    } catch {
-      console.warn("[Anima] Não foi possível salvar localmente, tentando upload via API...");
-      const blob = new Blob([imageBuffer], { type: `image/${imgExt}` });
-      const formData = new FormData();
-      formData.append("image", blob, inputFilename);
-      formData.append("type", "input");
-      const uploadRes = await fetch(`${comfyClient.getBaseUrl()}/upload/image`, { method: "POST", body: formData });
-      if (!uploadRes.ok) {
-        throw new Error(`Falha ao enviar imagem para ComfyUI: ${uploadRes.status}`);
-      }
-      console.log("[Anima] Upload da imagem realizado com sucesso");
-    }
+    await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl);
     const result = await comfyClient.captionImage(inputFilename);
     console.log("[Anima] Caption gerado:", result.text ? result.text.slice(0, 100) + "..." : "vazio");
     return result;
@@ -1257,6 +1223,11 @@ function setupIPC() {
   });
   ipcMain.handle("file:readImage", async (_event, filePath) => {
     try {
+      const historyBaseDir = join(app.getPath("userData"), "history");
+      if (!isPathSafe(filePath, historyBaseDir)) {
+        console.warn("[Anima] Tentativa de leitura de arquivo fora do histórico:", filePath);
+        return null;
+      }
       const buffer = readFileSync(filePath);
       const ext = filePath.endsWith(".png") ? "png" : "jpeg";
       return `data:image/${ext};base64,${buffer.toString("base64")}`;
@@ -1293,11 +1264,20 @@ function setupIPC() {
     return items;
   });
   ipcMain.handle("file:deleteHistoryItems", async (_event, items) => {
+    const historyBaseDir = join(app.getPath("userData"), "history");
     for (const { id, filePath } of items) {
       if (filePath && existsSync(filePath)) {
+        if (!isPathSafe(filePath, historyBaseDir)) {
+          console.warn("[Anima] Tentativa de exclusão de arquivo fora do histórico:", filePath);
+          continue;
+        }
         rmSync(filePath, { force: true });
       }
-      const dirPath = join(app.getPath("userData"), "history", id);
+      const dirPath = join(historyBaseDir, id);
+      if (!isPathSafe(dirPath, historyBaseDir)) {
+        console.warn("[Anima] Tentativa de exclusão de diretório fora do histórico:", dirPath);
+        continue;
+      }
       if (existsSync(dirPath)) {
         rmSync(dirPath, { recursive: true, force: true });
       }
@@ -1322,6 +1302,9 @@ app.whenReady().then(async () => {
         console.error("[Anima] Falha ao iniciar ComfyUI:", result.message);
         mainWindow?.webContents.send("comfyui:launchError", result.message);
       }
+    }).catch((err) => {
+      console.error("[Anima] Erro ao iniciar ComfyUI:", err);
+      mainWindow?.webContents.send("comfyui:launchError", err instanceof Error ? err.message : "Erro desconhecido");
     });
   }
   app.on("activate", () => {
@@ -1329,10 +1312,12 @@ app.whenReady().then(async () => {
   });
 });
 app.on("before-quit", () => {
+  stopStatusPoll();
   comfyLauncher.stop();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
+    stopStatusPoll();
     comfyLauncher.stop();
     app.quit();
   }
