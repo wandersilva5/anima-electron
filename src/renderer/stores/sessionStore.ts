@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ComfyUIStatus, GenerationResult, GenerationParams, LoraInfo, ModelInfo, DiffusionModelId } from '@shared/types'
-import { MODEL_PROFILES } from '../../shared/modelProfiles'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 interface GenerationParamsState extends GenerationParams {
   setPrompt: (p: string) => void

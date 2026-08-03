@@ -40,6 +40,8 @@ export interface GenerationParams {
   maskFilename?: string
   // Pose parameters (VNCCS)
   poseData?: string
+  poseImageBase64?: string
+  poseImageFilename?: string
   lineThickness?: number
   safeZone?: number
 }
@@ -104,6 +106,7 @@ export interface AppSettings {
   comfyUIPath: string
   modelsPath: string
   lorasPath: string
+  comfyUrl?: string
 }
 
 export interface ComfyUIHistoryItem {

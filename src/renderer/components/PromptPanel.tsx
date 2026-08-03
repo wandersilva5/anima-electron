@@ -1,7 +1,7 @@
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
 import { Sparkles, Shuffle } from 'lucide-react'
-import { MODEL_PROFILES } from '../../shared/modelProfiles'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { ModelSidebar } from './ModelSidebar'
 
 const ASPECT_RATIOS = [

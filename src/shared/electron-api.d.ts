@@ -48,6 +48,11 @@ interface ElectronAPI {
     loadHistory: () => Promise<SavedHistoryItem[]>
     deleteHistoryItems: (items: { id: string; filePath: string }[]) => Promise<void>
     readImage: (filePath: string) => Promise<string | null>
+    selectImage: () => Promise<string | null>
+  }
+  pose: {
+    extractFromImage: (imagePath: string) => Promise<Record<string, [number, number]> | null>,
+    extractFromBase64: (imageBase64: string) => Promise<Record<string, [number, number]> | null>
   }
 }
 

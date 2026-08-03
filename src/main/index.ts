@@ -7,7 +7,8 @@ import { WorkflowManager } from './workflow'
 import { LoraScanner } from './loraScanner'
 import { ModelScanner } from './modelScanner'
 import { SettingsManager } from './settings'
-import { MODEL_PROFILES } from '../shared/modelProfiles'
+import type { GenerationParams } from '@shared/types'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 let mainWindow: BrowserWindow | null = null
 let comfyClient: ComfyUIClient
@@ -107,6 +108,115 @@ function isPathSafe(targetPath: string, allowedBase: string): boolean {
   return normalized.startsWith(base)
 }
 
+const VNCCS_CANVAS = { width: 512, height: 1536 }
+
+const COCO_TO_VNCCS: Record<string, number> = {
+  nose: 0,
+  l_eye: 1,
+  r_eye: 2,
+  l_ear: 3,
+  r_ear: 4,
+  l_shoulder: 5,
+  r_shoulder: 6,
+  l_elbow: 7,
+  r_elbow: 8,
+  l_wrist: 9,
+  r_wrist: 10,
+  l_hip: 11,
+  r_hip: 12,
+  l_knee: 13,
+  r_knee: 14,
+  l_ankle: 15,
+  r_ankle: 16,
+}
+
+function convertOpenPoseToVnccs(openposeJson: string): Record<string, [number, number]> | null {
+  try {
+    const data = JSON.parse(openposeJson)
+    const entries = Array.isArray(data) ? data : [data]
+    for (const entry of entries) {
+      const people = entry?.people
+      if (!Array.isArray(people) || people.length === 0) continue
+      const kp = people[0]?.pose_keypoints_2d
+      if (!Array.isArray(kp) || kp.length < 17 * 3) continue
+
+      const points: Record<string, [number, number]> = {}
+      for (const [vnccsName, idx] of Object.entries(COCO_TO_VNCCS)) {
+        const x = kp[idx * 3]
+        const y = kp[idx * 3 + 1]
+        const c = kp[idx * 3 + 2]
+        if (typeof x === 'number' && typeof y === 'number' && c > 0) {
+          points[vnccsName] = [x, y]
+        }
+      }
+
+      if (points.r_shoulder && points.l_shoulder) {
+        points.neck = [
+          (points.r_shoulder[0] + points.l_shoulder[0]) / 2,
+          (points.r_shoulder[1] + points.l_shoulder[1]) / 2,
+        ]
+      }
+
+      if (Object.keys(points).length < 5) return null
+
+      const xs = Object.values(points).map(p => p[0])
+      const ys = Object.values(points).map(p => p[1])
+      let minX = Math.min(...xs)
+      let maxX = Math.max(...xs)
+      let minY = Math.min(...ys)
+      let maxY = Math.max(...ys)
+
+      const padX = (maxX - minX) * 0.1 || 20
+      const padY = (maxY - minY) * 0.1 || 20
+      minX -= padX
+      maxX += padX
+      minY -= padY
+      maxY += padY
+
+      const bw = maxX - minX
+      const bh = maxY - minY
+      const scale = Math.min(VNCCS_CANVAS.width / bw, VNCCS_CANVAS.height / bh)
+      const ox = (VNCCS_CANVAS.width - bw * scale) / 2 - minX * scale
+      const oy = (VNCCS_CANVAS.height - bh * scale) / 2 - minY * scale
+
+      const result: Record<string, [number, number]> = {}
+      for (const [name, p] of Object.entries(points)) {
+        result[name] = [Math.round(p[0] * scale + ox), Math.round(p[1] * scale + oy)]
+      }
+      return result
+    }
+  } catch (err) {
+    console.warn('[Anima] Erro ao converter pose DWPose para VNCCS:', err)
+  }
+  return null
+}
+
+function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
+  const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const num = (v: unknown, fallback: number, min: number, max: number): number => {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return fallback
+    return Math.min(max, Math.max(min, n))
+  }
+  const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
+  return {
+    ...p,
+    prompt: str(p.prompt),
+    negativePrompt: str(p.negativePrompt),
+    modelName: str(p.modelName),
+    loraName: p.loraName ? str(p.loraName) : null,
+    filenamePrefix: str(p.filenamePrefix, 'anima'),
+    seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
+    steps: Math.floor(num(p.steps, 20, 1, 50)),
+    cfg: num(p.cfg, 5, 1, 20),
+    width: Math.floor(num(p.width, 648, 64, 4096)),
+    height: Math.floor(num(p.height, 1152, 64, 4096)),
+    loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
+    loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
+    denoise: p.denoise !== undefined ? num(p.denoise, 1, 0.05, 1) : undefined
+  }
+}
+
 function stopStatusPoll(): void {
   if (statusPollInterval) {
     clearInterval(statusPollInterval)
@@ -172,7 +282,7 @@ function setupIPC(): void {
   const settingsManager = new SettingsManager()
   const settings = settingsManager.get()
 
-  comfyClient = new ComfyUIClient('http://127.0.0.1:8188')
+  comfyClient = new ComfyUIClient(settings.comfyUrl || 'http://127.0.0.1:8188')
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath)
   workflowManager = new WorkflowManager(join(__dirname, '../../workflows'), settings.comfyUIPath)
   loraScanner = new LoraScanner(settingsManager)
@@ -182,7 +292,8 @@ function setupIPC(): void {
     return comfyClient.getStatus()
   })
 
-  ipcMain.handle('comfyui:generate', async (_event, params) => {
+  ipcMain.handle('comfyui:generate', async (_event, rawParams) => {
+    const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams
     console.log('[Anima] Iniciando geração...')
     console.log('[Anima] Modelo:', params.modelName, '| LoRA:', params.loraName ?? 'nenhum')
     console.log('[Anima] Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
@@ -206,11 +317,12 @@ function setupIPC(): void {
       throw new Error('ComfyUI não retornou imagens')
     }
 
-    const savedImages = saveImagesToHistory(response.prompt_id, images, params, params.filenamePrefix || 'anima')
+    const savedImages = saveImagesToHistory(response.prompt_id, images, params as unknown as Record<string, unknown>, params.filenamePrefix || 'anima')
     return { promptId: response.prompt_id, images: savedImages }
   })
 
-  ipcMain.handle('comfyui:generateImprove', async (_event, params) => {
+  ipcMain.handle('comfyui:generateImprove', async (_event, rawParams) => {
+    const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams & { imageBase64?: string; maskBase64?: string; poseImageBase64?: string }
     console.log('[Anima] Iniciando melhoria de imagem (img2img)...')
     console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
 
@@ -228,6 +340,14 @@ function setupIPC(): void {
     const inputFilename = `anima-improve-${Date.now()}.${imgExt === 'jpeg' ? 'jpg' : imgExt}`
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl)
 
+    // Upload rendered pose image (single-pose OpenPose canvas) for the LLLite
+    let poseImageFilename: string | undefined
+    if (params.poseImageBase64) {
+      poseImageFilename = `anima-pose-${Date.now()}.png`
+      await uploadImageToComfyUI(params.poseImageBase64, poseImageFilename, comfyInputDir, baseUrl)
+      console.log('[Anima] Pose renderizada enviada para ComfyUI:', poseImageFilename)
+    }
+
     // Handle mask upload for inpainting
     let maskFilename: string | undefined
     if (params.maskBase64) {
@@ -239,7 +359,8 @@ function setupIPC(): void {
       ...params,
       imagePath: inputFilename,
       filenamePrefix: params.filenamePrefix || 'anima-improve',
-      maskFilename
+      maskFilename,
+      poseImageFilename
     }
     const prompt = workflowManager.buildPrompt(improveParams)
     console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
@@ -257,7 +378,7 @@ function setupIPC(): void {
     )
     console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
 
-    const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || 'anima-improve')
+    const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
     return { promptId: response.prompt_id, images: savedImages }
   })
 
@@ -325,6 +446,9 @@ function setupIPC(): void {
     comfyLauncher.updatePath(s.comfyUIPath)
     loraScanner.updatePath(settingsManager)
     modelScanner.updatePath(settingsManager)
+    if (s.comfyUrl) {
+      comfyClient.setUrl(s.comfyUrl)
+    }
     return updated
   })
 
@@ -334,6 +458,83 @@ function setupIPC(): void {
       title: 'Selecionar pasta'
     })
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle('file:selectImage', async () => {
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      title: 'Selecionar imagem de referência',
+      filters: [
+        { name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }
+      ]
+    }
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle('pose:extractFromImage', async (_event, imagePath: string) => {
+    try {
+      if (!imagePath || typeof imagePath !== 'string') {
+        throw new Error('Caminho de imagem inválido')
+      }
+      if (!existsSync(imagePath)) {
+        throw new Error('Arquivo de imagem não encontrado')
+      }
+      const buffer = readFileSync(imagePath)
+      const ext = imagePath.endsWith('.png') ? 'png' : imagePath.endsWith('.webp') ? 'webp' : 'jpg'
+      const inputFilename = `anima-pose-ref-${Date.now()}.${ext}`
+      const settings = settingsManager.get()
+      const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+      await uploadImageToComfyUI(buffer.toString('base64'), inputFilename, comfyInputDir, comfyClient.getBaseUrl())
+      console.log('[Anima] Extraindo pose da imagem:', imagePath)
+
+      const { openposeJson } = await comfyClient.extractPose(inputFilename)
+      const joints = convertOpenPoseToVnccs(openposeJson)
+
+      try {
+        rmSync(join(comfyInputDir, inputFilename), { force: true })
+      } catch { /* cleanup best-effort */ }
+
+      if (!joints) {
+        throw new Error('Não foi possível detectar uma pose na imagem. Verifique se o modelo DWPose foi baixado e tente outra imagem.')
+      }
+      return joints
+    } catch (err) {
+      console.warn('[Anima] Falha ao extrair pose:', err)
+      throw err
+    }
+  })
+
+  ipcMain.handle('pose:extractFromBase64', async (_event, imageBase64: string) => {
+    try {
+      if (!imageBase64 || typeof imageBase64 !== 'string') {
+        throw new Error('Imagem inválida')
+      }
+      const imageMatch = imageBase64.match(/^data:image\/(\w+);base64,/)
+      const imgExt = imageMatch ? (imageMatch[1] === 'jpeg' ? 'jpg' : imageMatch[1]) : 'png'
+      const inputFilename = `anima-pose-ref-${Date.now()}.${imgExt}`
+      const settings = settingsManager.get()
+      const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+      await uploadImageToComfyUI(imageBase64, inputFilename, comfyInputDir, comfyClient.getBaseUrl())
+      console.log('[Anima] Extraindo pose da imagem enviada...')
+
+      const { openposeJson } = await comfyClient.extractPose(inputFilename)
+      const joints = convertOpenPoseToVnccs(openposeJson)
+
+      try {
+        rmSync(join(comfyInputDir, inputFilename), { force: true })
+      } catch { /* cleanup best-effort */ }
+
+      if (!joints) {
+        throw new Error('Não foi possível detectar uma pose na imagem. Verifique se o modelo DWPose foi baixado e tente outra imagem.')
+      }
+      return joints
+    } catch (err) {
+      console.warn('[Anima] Falha ao extrair pose:', err)
+      throw err
+    }
   })
 
   ipcMain.handle('app:getWorkflowDefaults', async (_event, diffusionModel?: any) => {
@@ -347,8 +548,9 @@ function setupIPC(): void {
   ipcMain.handle('file:readImage', async (_event, filePath: string) => {
     try {
       const historyBaseDir = join(app.getPath('userData'), 'history')
-      if (!isPathSafe(filePath, historyBaseDir)) {
-        console.warn('[Anima] Tentativa de leitura de arquivo fora do histórico:', filePath)
+      const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath]
+      if (!allowedBases.some(base => isPathSafe(filePath, base))) {
+        console.warn('[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:', filePath)
         return null
       }
       const buffer = readFileSync(filePath)

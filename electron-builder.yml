@@ -1,7 +1,6 @@
 appId: com.anima.electron
 productName: Anima
 directories:
-  buildResources: resources
   output: release
 files:
   - out/**/*
@@ -11,7 +10,7 @@ win:
       arch:
         - x64
   artifactName: ${productName}-${version}-setup.${ext}
-  icon: null
+  icon: icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

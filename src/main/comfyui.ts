@@ -280,6 +280,69 @@ export class ComfyUIClient {
     return { text: '' }
   }
 
+  async extractPose(inputFilename: string): Promise<{ openposeJson: string }> {
+    const prompt: Record<string, unknown> = {
+      '1': {
+        class_type: 'LoadImage',
+        _meta: { title: 'LoadImage (pose)' },
+        inputs: { image: inputFilename }
+      },
+      '2': {
+        class_type: 'DWPreprocessor',
+        _meta: { title: 'DWPose (pose)' },
+        inputs: {
+          image: ['1', 0],
+          detect_hand: 'disable',
+          detect_body: 'enable',
+          detect_face: 'disable',
+          resolution: 512,
+          bbox_detector: 'yolox_l.onnx',
+          pose_estimator: 'dw-ll_ucoco_384_bs5.torchscript.pt',
+          scale_stick_for_xinsr_cn: 'disable'
+        }
+      },
+      '3': {
+        class_type: 'SaveImage',
+        _meta: { title: 'SaveImage (pose)' },
+        inputs: {
+          images: ['2', 0],
+          filename_prefix: 'anima-pose-extract'
+        }
+      }
+    }
+
+    const response = await this.sendPrompt(prompt)
+    const promptId = response.prompt_id
+    console.log('[ComfyUIClient] Extraindo pose via DWPose, prompt:', promptId)
+    await this.waitForResult(promptId)
+
+    const historyRes = await fetch(`${this.baseUrl}/history/${promptId}`)
+    if (!historyRes.ok) {
+      throw new Error('Falha ao obter resultado do DWPose')
+    }
+    const data: Record<string, ComfyUIHistoryItem> = await historyRes.json()
+    const item = data[promptId]
+    const outputs = (item?.outputs ?? {}) as Record<string, Record<string, unknown>>
+    let openposeJson = ''
+    for (const nodeId of Object.keys(outputs)) {
+      const out = outputs[nodeId]
+      if (!out) continue
+      for (const [key, val] of Object.entries(out)) {
+        if (key.toLowerCase().includes('openpose') || key.toLowerCase().includes('json')) {
+          if (Array.isArray(val) && typeof val[0] === 'string') {
+            openposeJson = val[0]
+            break
+          }
+        }
+      }
+      if (openposeJson) break
+    }
+    if (!openposeJson) {
+      throw new Error('DWPose não retornou dados de pose')
+    }
+    return { openposeJson }
+  }
+
   private connectProgress(
     promptId: string,
     onProgress: (current: number, max: number) => void,

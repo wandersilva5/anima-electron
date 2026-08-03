@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, FolderOpen, HardDrive, Save } from 'lucide-react'
+import { X, FolderOpen, HardDrive, Link2, Save } from 'lucide-react'
 import type { AppSettings } from '@shared/types'
 
 interface SettingsModalProps {
@@ -11,7 +11,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<AppSettings>({
     comfyUIPath: '',
     modelsPath: '',
-    lorasPath: ''
+    lorasPath: '',
+    comfyUrl: ''
   })
   const [saving, setSaving] = useState(false)
 
@@ -40,10 +41,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   }
 
-  const fields: { key: keyof AppSettings; label: string; icon: typeof HardDrive; placeholder: string }[] = [
-    { key: 'comfyUIPath', label: 'Pasta do ComfyUI', icon: HardDrive, placeholder: 'D:\\ComfyUI_windows_portable' },
-    { key: 'modelsPath', label: 'Pasta de Modelos', icon: HardDrive, placeholder: '(derivado do ComfyUI)' },
-    { key: 'lorasPath', label: 'Pasta de LoRAs', icon: HardDrive, placeholder: '(derivado do ComfyUI)' }
+  const fields: { key: keyof AppSettings; label: string; icon: typeof HardDrive; placeholder: string; selectable?: boolean }[] = [
+    { key: 'comfyUIPath', label: 'Pasta do ComfyUI', icon: HardDrive, placeholder: 'C:\\ComfyUI_windows_portable', selectable: true },
+    { key: 'comfyUrl', label: 'URL do ComfyUI', icon: Link2, placeholder: 'http://127.0.0.1:8188' },
+    { key: 'modelsPath', label: 'Pasta de Modelos', icon: HardDrive, placeholder: '(derivado do ComfyUI)', selectable: true },
+    { key: 'lorasPath', label: 'Pasta de LoRAs', icon: HardDrive, placeholder: '(derivado do ComfyUI)', selectable: true }
   ]
 
   return (
@@ -60,7 +62,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         </div>
 
         <div className="px-6 py-4 space-y-4">
-          {fields.map(({ key, label, icon: Icon, placeholder }) => (
+          {fields.map(({ key, label, icon: Icon, placeholder, selectable }) => (
             <div key={key}>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">{label}</label>
               <div className="flex items-center gap-2">
@@ -68,19 +70,21 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <Icon size={14} className="text-text-muted shrink-0" />
                   <input
                     type="text"
-                    value={settings[key]}
+                    value={String(settings[key] ?? '')}
                     onChange={e => setSettings(prev => ({ ...prev, [key]: e.target.value }))}
                     placeholder={placeholder}
                     className="flex-1 bg-transparent text-xs text-text-primary font-mono outline-none placeholder:text-text-muted/50"
                   />
                 </div>
-                <button
-                  onClick={() => handleSelectDir(key)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary text-xs transition-colors"
-                  title="Selecionar pasta"
-                >
-                  <FolderOpen size={14} />
-                </button>
+                {selectable && (
+                  <button
+                    onClick={() => handleSelectDir(key)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary text-xs transition-colors"
+                    title="Selecionar pasta"
+                  >
+                    <FolderOpen size={14} />
+                  </button>
+                )}
               </div>
             </div>
           ))}

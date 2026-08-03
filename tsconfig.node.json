@@ -7,5 +7,5 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["vite.config.ts", "electron.vite.config.ts", "tailwind.config.ts", "postcss.config.js"]
+  "include": ["electron.vite.config.ts", "tailwind.config.ts", "postcss.config.js"]
 }

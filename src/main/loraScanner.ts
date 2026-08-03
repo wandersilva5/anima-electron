@@ -2,6 +2,7 @@ import { readdirSync, existsSync } from 'fs'
 import { join, sep } from 'path'
 import type { LoraInfo } from '@shared/types'
 import type { SettingsManager } from './settings'
+import { findPreview } from './previewFinder'
 
 export class LoraScanner {
   private settingsManager: SettingsManager
@@ -40,26 +41,11 @@ export class LoraScanner {
         results.push({
           name: loraName,
           path: fullPath,
-          previewUrl: this.findPreview(entry.name, dir)
+          previewUrl: findPreview(entry.name, dir, this.settingsManager.resolvedLorasPath)
         })
       }
     }
 
     return results
-  }
-
-  private findPreview(filename: string, dir: string): string | undefined {
-    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, '')
-    const exts = ['.png', '.jpg', '.jpeg', '.webp']
-    const loraDir = this.settingsManager.resolvedLorasPath
-    const paths = [
-      ...exts.map(e => join(dir, 'previews', `${baseName}${e}`)),
-      ...exts.map(e => join(dir, `${baseName}${e}`)),
-      ...exts.map(e => join(loraDir, 'previews', `${baseName}${e}`))
-    ]
-    for (const p of paths) {
-      if (existsSync(p)) return p
-    }
-    return undefined
   }
 }

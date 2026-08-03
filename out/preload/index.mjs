@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   file: {
     loadHistory: () => ipcRenderer.invoke("file:loadHistory"),
     deleteHistoryItems: (items) => ipcRenderer.invoke("file:deleteHistoryItems", items),
-    readImage: (filePath) => ipcRenderer.invoke("file:readImage", filePath)
+    readImage: (filePath) => ipcRenderer.invoke("file:readImage", filePath),
+    selectImage: () => ipcRenderer.invoke("file:selectImage")
+  },
+  pose: {
+    extractFromImage: (imagePath) => ipcRenderer.invoke("pose:extractFromImage", imagePath),
+    extractFromBase64: (imageBase64) => ipcRenderer.invoke("pose:extractFromBase64", imageBase64)
   }
 });

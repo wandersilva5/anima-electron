@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
 import type { GenerationParams, WorkflowJSON, DiffusionModelId } from '@shared/types'
-import { MODEL_PROFILES } from '../shared/modelProfiles'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 interface WorkflowDefaults {
   steps: number
@@ -154,6 +154,33 @@ export class WorkflowManager {
     }
   }
 
+  // Ensure the Anima pose LLLite weights are available in the model_patches
+  // folder (where ModelPatchLoader reads from), copying from controlnet when
+  // only that copy exists. Returns the relative name used by ModelPatchLoader,
+  // or null when the file could not be located.
+  private ensureAnimaLLLite(relativePath: string): string | null {
+    try {
+      if (!this.comfyUIPath) return null
+      const modelsDir = join(this.comfyUIPath, 'ComfyUI', 'models')
+      const modelPatchesFile = join(modelsDir, 'model_patches', relativePath)
+      const controlnetFile = join(modelsDir, 'controlnet', relativePath)
+      if (existsSync(modelPatchesFile)) {
+        return relativePath
+      }
+      if (existsSync(controlnetFile)) {
+        mkdirSync(dirname(modelPatchesFile), { recursive: true })
+        copyFileSync(controlnetFile, modelPatchesFile)
+        console.log('[WorkflowManager] Anima pose LLLite copied to model_patches')
+        return relativePath
+      }
+      console.warn(`[WorkflowManager] Anima pose LLLite not found: ${relativePath}`)
+      return null
+    } catch (err) {
+      console.warn('[WorkflowManager] Failed to ensure Anima pose LLLite:', err)
+      return null
+    }
+  }
+
   private extractDefaults(
     workflow: WorkflowJSON,
     positiveNodeId: number | null,
@@ -188,10 +215,27 @@ export class WorkflowManager {
 
   getDefaults(modelId: DiffusionModelId = 'anima'): WorkflowDefaults {
     const data = this.workflows[modelId]
-    if (!data) {
-      throw new Error(`Workflow defaults not found for model: ${modelId}`)
+    if (data) {
+      return { ...data.defaults }
     }
-    return { ...data.defaults }
+    console.warn(`[WorkflowManager] Workflow defaults não encontrados para ${modelId}, usando fallback`)
+    const profile = MODEL_PROFILES[modelId]
+    return {
+      steps: profile.defaults.steps,
+      cfg: profile.defaults.cfg,
+      width: profile.defaults.width,
+      height: profile.defaults.height,
+      seed: 0,
+      sampler: profile.defaults.sampler,
+      scheduler: profile.defaults.scheduler,
+      denoise: 1,
+      positivePrompt: '',
+      negativePrompt: '',
+      loraName: 'None',
+      loraStrengthModel: 0.5,
+      loraStrengthClip: 0.5,
+      modelName: ''
+    }
   }
 
   buildPrompt(params: GenerationParams): Record<string, unknown> {
@@ -243,7 +287,9 @@ export class WorkflowManager {
           if (node.id === data.positiveNodeId) {
             widgetValues[0] = params.prompt
           } else if (node.id === data.negativeNodeId) {
-            widgetValues[0] = params.negativePrompt
+            if (params.negativePrompt) {
+              widgetValues[0] = params.negativePrompt
+            }
           }
           break
         }
@@ -371,8 +417,10 @@ export class WorkflowManager {
       prompt[String(node.id)] = nodeEntry
     }
 
-    // Inject pose data into VNCCS_PoseGenerator node
-    if ((params as any).poseData) {
+    // Inject pose data into VNCCS_PoseGenerator node if the workflow already has one.
+    // When a rendered single-pose image is available (poseImageFilename), skip the
+    // VNCCS grid entirely and let the dynamic pipeline below feed the image instead.
+    if ((params as any).poseData && !(params as any).poseImageFilename) {
       const poseNode = nodes.find(n => n.type === 'VNCCS_PoseGenerator')
       if (poseNode) {
         const poseEntry = prompt[String(poseNode.id)]
@@ -383,6 +431,70 @@ export class WorkflowManager {
           inputs['safe_zone'] = (params as any).safeZone ?? 100
           console.log('[Anima] Pose data injected into VNCCS_PoseGenerator')
         }
+      }
+    }
+
+    // Build pose conditioning pipeline dynamically when the workflow lacks a VNCCS node.
+    // VNCCS_PoseGenerator renders the OpenPose grid from joints JSON, ModelPatchLoader
+    // loads the Anima-format LLLite weights, then AnimaLLLiteApply patches the model
+    // feeding the KSampler with the pose image. When a rendered single-pose image is
+    // available (poseImageFilename), LoadImage feeds it directly to AnimaLLLiteApply
+    // avoiding the 12-pose VNCCS grid whose center-crop loses the reference pose.
+    if ((params as any).poseData && !nodes.some(n => n.type === 'VNCCS_PoseGenerator') && data.ksamplerNodeId) {
+      const llliteName = modelId === 'anima' ? this.ensureAnimaLLLite('anima\\anima-lllite-pose-1.safetensors') : null
+      const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
+      const modelSource = ksamplerEntry && (ksamplerEntry.inputs as Record<string, unknown>)?.model
+
+      if (llliteName && ksamplerEntry && Array.isArray(modelSource)) {
+        const poseSourceId = 88800
+        const modelPatchId = 88802
+        const applyId = 88803
+        const poseImageFilename = (params as any).poseImageFilename as string | undefined
+
+        if (poseImageFilename) {
+          prompt[String(poseSourceId)] = {
+            class_type: 'LoadImage',
+            _meta: { title: 'LoadImage (pose única)' },
+            inputs: {
+              image: poseImageFilename
+            }
+          }
+        } else {
+          prompt[String(poseSourceId)] = {
+            class_type: 'VNCCS_PoseGenerator',
+            _meta: { title: 'VNCCS_PoseGenerator (pose)' },
+            inputs: {
+              pose_data: (params as any).poseData,
+              line_thickness: (params as any).lineThickness ?? 3,
+              safe_zone: (params as any).safeZone ?? 100
+            }
+          }
+        }
+
+        prompt[String(modelPatchId)] = {
+          class_type: 'ModelPatchLoader',
+          _meta: { title: 'ModelPatchLoader (pose LLLite)' },
+          inputs: {
+            name: llliteName
+          }
+        }
+
+        prompt[String(applyId)] = {
+          class_type: 'AnimaLLLiteApply',
+          _meta: { title: 'AnimaLLLiteApply (pose)' },
+          inputs: {
+            model: modelSource,
+            model_patch: [String(modelPatchId), 0],
+            image: [String(poseSourceId), 0],
+            strength: (params as any).poseStrength ?? 1,
+            start_percent: 0,
+            end_percent: 1
+          }
+        }
+
+        const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+        kInputs.model = [String(applyId), 0]
+        console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? 'LoadImage' : 'VNCCS_PoseGenerator'} -> ModelPatchLoader -> AnimaLLLiteApply)`)
       }
     }
 

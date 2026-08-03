@@ -2,6 +2,7 @@ import { readdirSync, existsSync } from 'fs'
 import { join, sep } from 'path'
 import type { ModelInfo } from '@shared/types'
 import type { SettingsManager } from './settings'
+import { findPreview } from './previewFinder'
 
 export class ModelScanner {
   private settingsManager: SettingsManager
@@ -49,7 +50,7 @@ export class ModelScanner {
             name,
             path: fullPath,
             type,
-            previewUrl: this.findPreview(entry.name, dir, baseDir)
+            previewUrl: findPreview(entry.name, dir, baseDir)
           })
         }
       }
@@ -58,19 +59,5 @@ export class ModelScanner {
     }
 
     return results
-  }
-
-  private findPreview(filename: string, dir: string, baseDir: string): string | undefined {
-    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, '')
-    const exts = ['.png', '.jpg', '.jpeg', '.webp']
-    const paths = [
-      ...exts.map(e => join(dir, 'previews', `${baseName}${e}`)),
-      ...exts.map(e => join(dir, `${baseName}${e}`)),
-      ...exts.map(e => join(baseDir, 'previews', `${baseName}${e}`))
-    ]
-    for (const p of paths) {
-      if (existsSync(p)) return p
-    }
-    return undefined
   }
 }

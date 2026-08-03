@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join, sep } from "path";
-import { readFileSync, existsSync, writeFileSync, readdirSync, mkdirSync, statSync, rmSync } from "fs";
+import { join, dirname, sep } from "path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync, statSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
@@ -260,6 +260,66 @@ class ComfyUIClient {
     }
     console.warn("[ComfyUIClient] Nenhum nó de captioning produziu resultado");
     return { text: "" };
+  }
+  async extractPose(inputFilename) {
+    const prompt = {
+      "1": {
+        class_type: "LoadImage",
+        _meta: { title: "LoadImage (pose)" },
+        inputs: { image: inputFilename }
+      },
+      "2": {
+        class_type: "DWPreprocessor",
+        _meta: { title: "DWPose (pose)" },
+        inputs: {
+          image: ["1", 0],
+          detect_hand: "disable",
+          detect_body: "enable",
+          detect_face: "disable",
+          resolution: 512,
+          bbox_detector: "yolox_l.onnx",
+          pose_estimator: "dw-ll_ucoco_384_bs5.torchscript.pt",
+          scale_stick_for_xinsr_cn: "disable"
+        }
+      },
+      "3": {
+        class_type: "SaveImage",
+        _meta: { title: "SaveImage (pose)" },
+        inputs: {
+          images: ["2", 0],
+          filename_prefix: "anima-pose-extract"
+        }
+      }
+    };
+    const response = await this.sendPrompt(prompt);
+    const promptId = response.prompt_id;
+    console.log("[ComfyUIClient] Extraindo pose via DWPose, prompt:", promptId);
+    await this.waitForResult(promptId);
+    const historyRes = await fetch(`${this.baseUrl}/history/${promptId}`);
+    if (!historyRes.ok) {
+      throw new Error("Falha ao obter resultado do DWPose");
+    }
+    const data = await historyRes.json();
+    const item = data[promptId];
+    const outputs = item?.outputs ?? {};
+    let openposeJson = "";
+    for (const nodeId of Object.keys(outputs)) {
+      const out = outputs[nodeId];
+      if (!out) continue;
+      for (const [key, val] of Object.entries(out)) {
+        if (key.toLowerCase().includes("openpose") || key.toLowerCase().includes("json")) {
+          if (Array.isArray(val) && typeof val[0] === "string") {
+            openposeJson = val[0];
+            break;
+          }
+        }
+      }
+      if (openposeJson) break;
+    }
+    if (!openposeJson) {
+      throw new Error("DWPose não retornou dados de pose");
+    }
+    return { openposeJson };
   }
   connectProgress(promptId, onProgress, onError) {
     const wsUrl = this.baseUrl.replace(/^http/, "ws") + "/ws";
@@ -529,6 +589,32 @@ class WorkflowManager {
       console.warn("[WorkflowManager] Failed to patch ComfyUI-GGUF loader.py:", err);
     }
   }
+  // Ensure the Anima pose LLLite weights are available in the model_patches
+  // folder (where ModelPatchLoader reads from), copying from controlnet when
+  // only that copy exists. Returns the relative name used by ModelPatchLoader,
+  // or null when the file could not be located.
+  ensureAnimaLLLite(relativePath) {
+    try {
+      if (!this.comfyUIPath) return null;
+      const modelsDir = join(this.comfyUIPath, "ComfyUI", "models");
+      const modelPatchesFile = join(modelsDir, "model_patches", relativePath);
+      const controlnetFile = join(modelsDir, "controlnet", relativePath);
+      if (existsSync(modelPatchesFile)) {
+        return relativePath;
+      }
+      if (existsSync(controlnetFile)) {
+        mkdirSync(dirname(modelPatchesFile), { recursive: true });
+        copyFileSync(controlnetFile, modelPatchesFile);
+        console.log("[WorkflowManager] Anima pose LLLite copied to model_patches");
+        return relativePath;
+      }
+      console.warn(`[WorkflowManager] Anima pose LLLite not found: ${relativePath}`);
+      return null;
+    } catch (err) {
+      console.warn("[WorkflowManager] Failed to ensure Anima pose LLLite:", err);
+      return null;
+    }
+  }
   extractDefaults(workflow, positiveNodeId, negativeNodeId) {
     const nodes = workflow.nodes;
     const ksampler = nodes.find((n) => n.type === "KSampler");
@@ -556,10 +642,27 @@ class WorkflowManager {
   }
   getDefaults(modelId = "anima") {
     const data = this.workflows[modelId];
-    if (!data) {
-      throw new Error(`Workflow defaults not found for model: ${modelId}`);
+    if (data) {
+      return { ...data.defaults };
     }
-    return { ...data.defaults };
+    console.warn(`[WorkflowManager] Workflow defaults não encontrados para ${modelId}, usando fallback`);
+    const profile = MODEL_PROFILES[modelId];
+    return {
+      steps: profile.defaults.steps,
+      cfg: profile.defaults.cfg,
+      width: profile.defaults.width,
+      height: profile.defaults.height,
+      seed: 0,
+      sampler: profile.defaults.sampler,
+      scheduler: profile.defaults.scheduler,
+      denoise: 1,
+      positivePrompt: "",
+      negativePrompt: "",
+      loraName: "None",
+      loraStrengthModel: 0.5,
+      loraStrengthClip: 0.5,
+      modelName: ""
+    };
   }
   buildPrompt(params) {
     const modelId = params.diffusionModel || "anima";
@@ -720,7 +823,7 @@ class WorkflowManager {
       }
       prompt[String(node.id)] = nodeEntry;
     }
-    if (params.poseData) {
+    if (params.poseData && !params.poseImageFilename) {
       const poseNode = nodes.find((n) => n.type === "VNCCS_PoseGenerator");
       if (poseNode) {
         const poseEntry = prompt[String(poseNode.id)];
@@ -731,6 +834,58 @@ class WorkflowManager {
           inputs["safe_zone"] = params.safeZone ?? 100;
           console.log("[Anima] Pose data injected into VNCCS_PoseGenerator");
         }
+      }
+    }
+    if (params.poseData && !nodes.some((n) => n.type === "VNCCS_PoseGenerator") && data.ksamplerNodeId) {
+      const llliteName = modelId === "anima" ? this.ensureAnimaLLLite("anima\\anima-lllite-pose-1.safetensors") : null;
+      const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
+      const modelSource = ksamplerEntry && ksamplerEntry.inputs?.model;
+      if (llliteName && ksamplerEntry && Array.isArray(modelSource)) {
+        const poseSourceId = 88800;
+        const modelPatchId = 88802;
+        const applyId = 88803;
+        const poseImageFilename = params.poseImageFilename;
+        if (poseImageFilename) {
+          prompt[String(poseSourceId)] = {
+            class_type: "LoadImage",
+            _meta: { title: "LoadImage (pose única)" },
+            inputs: {
+              image: poseImageFilename
+            }
+          };
+        } else {
+          prompt[String(poseSourceId)] = {
+            class_type: "VNCCS_PoseGenerator",
+            _meta: { title: "VNCCS_PoseGenerator (pose)" },
+            inputs: {
+              pose_data: params.poseData,
+              line_thickness: params.lineThickness ?? 3,
+              safe_zone: params.safeZone ?? 100
+            }
+          };
+        }
+        prompt[String(modelPatchId)] = {
+          class_type: "ModelPatchLoader",
+          _meta: { title: "ModelPatchLoader (pose LLLite)" },
+          inputs: {
+            name: llliteName
+          }
+        };
+        prompt[String(applyId)] = {
+          class_type: "AnimaLLLiteApply",
+          _meta: { title: "AnimaLLLiteApply (pose)" },
+          inputs: {
+            model: modelSource,
+            model_patch: [String(modelPatchId), 0],
+            image: [String(poseSourceId), 0],
+            strength: params.poseStrength ?? 1,
+            start_percent: 0,
+            end_percent: 1
+          }
+        };
+        const kInputs = ksamplerEntry.inputs;
+        kInputs.model = [String(applyId), 0];
+        console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? "LoadImage" : "VNCCS_PoseGenerator"} -> ModelPatchLoader -> AnimaLLLiteApply)`);
       }
     }
     if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
@@ -790,6 +945,21 @@ class WorkflowManager {
     return prompt;
   }
 }
+function findPreview(filename, dir, extraBase) {
+  const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
+  const exts = [".png", ".jpg", ".jpeg", ".webp"];
+  const paths = [
+    ...exts.map((e) => join(dir, "previews", `${baseName}${e}`)),
+    ...exts.map((e) => join(dir, `${baseName}${e}`))
+  ];
+  if (extraBase) {
+    paths.push(...exts.map((e) => join(extraBase, "previews", `${baseName}${e}`)));
+  }
+  for (const p of paths) {
+    if (existsSync(p)) return p;
+  }
+  return void 0;
+}
 class LoraScanner {
   constructor(settingsManager) {
     this.settingsManager = settingsManager;
@@ -821,25 +991,11 @@ class LoraScanner {
         results.push({
           name: loraName,
           path: fullPath,
-          previewUrl: this.findPreview(entry.name, dir)
+          previewUrl: findPreview(entry.name, dir, this.settingsManager.resolvedLorasPath)
         });
       }
     }
     return results;
-  }
-  findPreview(filename, dir) {
-    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
-    const exts = [".png", ".jpg", ".jpeg", ".webp"];
-    const loraDir = this.settingsManager.resolvedLorasPath;
-    const paths = [
-      ...exts.map((e) => join(dir, "previews", `${baseName}${e}`)),
-      ...exts.map((e) => join(dir, `${baseName}${e}`)),
-      ...exts.map((e) => join(loraDir, "previews", `${baseName}${e}`))
-    ];
-    for (const p of paths) {
-      if (existsSync(p)) return p;
-    }
-    return void 0;
   }
 }
 class ModelScanner {
@@ -879,7 +1035,7 @@ class ModelScanner {
             name,
             path: fullPath,
             type,
-            previewUrl: this.findPreview(entry.name, dir, baseDir)
+            previewUrl: findPreview(entry.name, dir, baseDir)
           });
         }
       }
@@ -887,24 +1043,25 @@ class ModelScanner {
     }
     return results;
   }
-  findPreview(filename, dir, baseDir) {
-    const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
-    const exts = [".png", ".jpg", ".jpeg", ".webp"];
-    const paths = [
-      ...exts.map((e) => join(dir, "previews", `${baseName}${e}`)),
-      ...exts.map((e) => join(dir, `${baseName}${e}`)),
-      ...exts.map((e) => join(baseDir, "previews", `${baseName}${e}`))
-    ];
-    for (const p of paths) {
-      if (existsSync(p)) return p;
-    }
-    return void 0;
+}
+const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
+function detectComfyUIPath() {
+  const candidates = [
+    join(process.env.LOCALAPPDATA || "", "ComfyUI_windows_portable"),
+    "C:\\ComfyUI_windows_portable",
+    "D:\\ComfyUI_windows_portable",
+    join(process.env.USERPROFILE || "", "ComfyUI_windows_portable")
+  ];
+  for (const p of candidates) {
+    if (existsSync(join(p, "ComfyUI"))) return p;
   }
+  return "";
 }
 const DEFAULTS = {
-  comfyUIPath: "D:\\ComfyUI_windows_portable",
+  comfyUIPath: detectComfyUIPath(),
   modelsPath: "",
-  lorasPath: ""
+  lorasPath: "",
+  comfyUrl: DEFAULT_COMFY_URL
 };
 class SettingsManager {
   constructor() {
@@ -1021,6 +1178,104 @@ function isPathSafe(targetPath, allowedBase) {
   const base = join(allowedBase);
   return normalized.startsWith(base);
 }
+const VNCCS_CANVAS = { width: 512, height: 1536 };
+const COCO_TO_VNCCS = {
+  nose: 0,
+  l_eye: 1,
+  r_eye: 2,
+  l_ear: 3,
+  r_ear: 4,
+  l_shoulder: 5,
+  r_shoulder: 6,
+  l_elbow: 7,
+  r_elbow: 8,
+  l_wrist: 9,
+  r_wrist: 10,
+  l_hip: 11,
+  r_hip: 12,
+  l_knee: 13,
+  r_knee: 14,
+  l_ankle: 15,
+  r_ankle: 16
+};
+function convertOpenPoseToVnccs(openposeJson) {
+  try {
+    const data = JSON.parse(openposeJson);
+    const entries = Array.isArray(data) ? data : [data];
+    for (const entry of entries) {
+      const people = entry?.people;
+      if (!Array.isArray(people) || people.length === 0) continue;
+      const kp = people[0]?.pose_keypoints_2d;
+      if (!Array.isArray(kp) || kp.length < 17 * 3) continue;
+      const points = {};
+      for (const [vnccsName, idx] of Object.entries(COCO_TO_VNCCS)) {
+        const x = kp[idx * 3];
+        const y = kp[idx * 3 + 1];
+        const c = kp[idx * 3 + 2];
+        if (typeof x === "number" && typeof y === "number" && c > 0) {
+          points[vnccsName] = [x, y];
+        }
+      }
+      if (points.r_shoulder && points.l_shoulder) {
+        points.neck = [
+          (points.r_shoulder[0] + points.l_shoulder[0]) / 2,
+          (points.r_shoulder[1] + points.l_shoulder[1]) / 2
+        ];
+      }
+      if (Object.keys(points).length < 5) return null;
+      const xs = Object.values(points).map((p) => p[0]);
+      const ys = Object.values(points).map((p) => p[1]);
+      let minX = Math.min(...xs);
+      let maxX = Math.max(...xs);
+      let minY = Math.min(...ys);
+      let maxY = Math.max(...ys);
+      const padX = (maxX - minX) * 0.1 || 20;
+      const padY = (maxY - minY) * 0.1 || 20;
+      minX -= padX;
+      maxX += padX;
+      minY -= padY;
+      maxY += padY;
+      const bw = maxX - minX;
+      const bh = maxY - minY;
+      const scale = Math.min(VNCCS_CANVAS.width / bw, VNCCS_CANVAS.height / bh);
+      const ox = (VNCCS_CANVAS.width - bw * scale) / 2 - minX * scale;
+      const oy = (VNCCS_CANVAS.height - bh * scale) / 2 - minY * scale;
+      const result = {};
+      for (const [name, p] of Object.entries(points)) {
+        result[name] = [Math.round(p[0] * scale + ox), Math.round(p[1] * scale + oy)];
+      }
+      return result;
+    }
+  } catch (err) {
+    console.warn("[Anima] Erro ao converter pose DWPose para VNCCS:", err);
+  }
+  return null;
+}
+function sanitizeGenerationParams(raw) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  const num = (v, fallback, min, max) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+  const str = (v, fallback = "") => typeof v === "string" ? v : fallback;
+  return {
+    ...p,
+    prompt: str(p.prompt),
+    negativePrompt: str(p.negativePrompt),
+    modelName: str(p.modelName),
+    loraName: p.loraName ? str(p.loraName) : null,
+    filenamePrefix: str(p.filenamePrefix, "anima"),
+    seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
+    steps: Math.floor(num(p.steps, 20, 1, 50)),
+    cfg: num(p.cfg, 5, 1, 20),
+    width: Math.floor(num(p.width, 648, 64, 4096)),
+    height: Math.floor(num(p.height, 1152, 64, 4096)),
+    loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
+    loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
+    denoise: p.denoise !== void 0 ? num(p.denoise, 1, 0.05, 1) : void 0
+  };
+}
 function stopStatusPoll() {
   if (statusPollInterval) {
     clearInterval(statusPollInterval);
@@ -1078,7 +1333,7 @@ function createWindow() {
 function setupIPC() {
   const settingsManager = new SettingsManager();
   const settings = settingsManager.get();
-  comfyClient = new ComfyUIClient("http://127.0.0.1:8188");
+  comfyClient = new ComfyUIClient(settings.comfyUrl || "http://127.0.0.1:8188");
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath);
   workflowManager = new WorkflowManager(join(__dirname, "../../workflows"), settings.comfyUIPath);
   loraScanner = new LoraScanner(settingsManager);
@@ -1086,7 +1341,8 @@ function setupIPC() {
   ipcMain.handle("comfyui:status", async () => {
     return comfyClient.getStatus();
   });
-  ipcMain.handle("comfyui:generate", async (_event, params) => {
+  ipcMain.handle("comfyui:generate", async (_event, rawParams) => {
+    const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando geração...");
     console.log("[Anima] Modelo:", params.modelName, "| LoRA:", params.loraName ?? "nenhum");
     console.log("[Anima] Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
@@ -1112,7 +1368,8 @@ function setupIPC() {
     const savedImages = saveImagesToHistory(response.prompt_id, images, params, params.filenamePrefix || "anima");
     return { promptId: response.prompt_id, images: savedImages };
   });
-  ipcMain.handle("comfyui:generateImprove", async (_event, params) => {
+  ipcMain.handle("comfyui:generateImprove", async (_event, rawParams) => {
+    const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando melhoria de imagem (img2img)...");
     console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
     if (!params.imageBase64) {
@@ -1125,6 +1382,12 @@ function setupIPC() {
     const imgExt = imageMatch ? imageMatch[1] : "png";
     const inputFilename = `anima-improve-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl);
+    let poseImageFilename;
+    if (params.poseImageBase64) {
+      poseImageFilename = `anima-pose-${Date.now()}.png`;
+      await uploadImageToComfyUI(params.poseImageBase64, poseImageFilename, comfyInputDir, baseUrl);
+      console.log("[Anima] Pose renderizada enviada para ComfyUI:", poseImageFilename);
+    }
     let maskFilename;
     if (params.maskBase64) {
       maskFilename = `anima-mask-${Date.now()}.png`;
@@ -1134,7 +1397,8 @@ function setupIPC() {
       ...params,
       imagePath: inputFilename,
       filenamePrefix: params.filenamePrefix || "anima-improve",
-      maskFilename
+      maskFilename,
+      poseImageFilename
     };
     const prompt = workflowManager.buildPrompt(improveParams);
     console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
@@ -1206,6 +1470,9 @@ function setupIPC() {
     comfyLauncher.updatePath(s.comfyUIPath);
     loraScanner.updatePath(settingsManager);
     modelScanner.updatePath(settingsManager);
+    if (s.comfyUrl) {
+      comfyClient.setUrl(s.comfyUrl);
+    }
     return updated;
   });
   ipcMain.handle("settings:selectDir", async () => {
@@ -1214,6 +1481,74 @@ function setupIPC() {
       title: "Selecionar pasta"
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("file:selectImage", async () => {
+    const options = {
+      properties: ["openFile"],
+      title: "Selecionar imagem de referência",
+      filters: [
+        { name: "Imagens", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }
+      ]
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("pose:extractFromImage", async (_event, imagePath) => {
+    try {
+      if (!imagePath || typeof imagePath !== "string") {
+        throw new Error("Caminho de imagem inválido");
+      }
+      if (!existsSync(imagePath)) {
+        throw new Error("Arquivo de imagem não encontrado");
+      }
+      const buffer = readFileSync(imagePath);
+      const ext = imagePath.endsWith(".png") ? "png" : imagePath.endsWith(".webp") ? "webp" : "jpg";
+      const inputFilename = `anima-pose-ref-${Date.now()}.${ext}`;
+      const settings2 = settingsManager.get();
+      const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+      await uploadImageToComfyUI(buffer.toString("base64"), inputFilename, comfyInputDir, comfyClient.getBaseUrl());
+      console.log("[Anima] Extraindo pose da imagem:", imagePath);
+      const { openposeJson } = await comfyClient.extractPose(inputFilename);
+      const joints = convertOpenPoseToVnccs(openposeJson);
+      try {
+        rmSync(join(comfyInputDir, inputFilename), { force: true });
+      } catch {
+      }
+      if (!joints) {
+        throw new Error("Não foi possível detectar uma pose na imagem. Verifique se o modelo DWPose foi baixado e tente outra imagem.");
+      }
+      return joints;
+    } catch (err) {
+      console.warn("[Anima] Falha ao extrair pose:", err);
+      throw err;
+    }
+  });
+  ipcMain.handle("pose:extractFromBase64", async (_event, imageBase64) => {
+    try {
+      if (!imageBase64 || typeof imageBase64 !== "string") {
+        throw new Error("Imagem inválida");
+      }
+      const imageMatch = imageBase64.match(/^data:image\/(\w+);base64,/);
+      const imgExt = imageMatch ? imageMatch[1] === "jpeg" ? "jpg" : imageMatch[1] : "png";
+      const inputFilename = `anima-pose-ref-${Date.now()}.${imgExt}`;
+      const settings2 = settingsManager.get();
+      const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+      await uploadImageToComfyUI(imageBase64, inputFilename, comfyInputDir, comfyClient.getBaseUrl());
+      console.log("[Anima] Extraindo pose da imagem enviada...");
+      const { openposeJson } = await comfyClient.extractPose(inputFilename);
+      const joints = convertOpenPoseToVnccs(openposeJson);
+      try {
+        rmSync(join(comfyInputDir, inputFilename), { force: true });
+      } catch {
+      }
+      if (!joints) {
+        throw new Error("Não foi possível detectar uma pose na imagem. Verifique se o modelo DWPose foi baixado e tente outra imagem.");
+      }
+      return joints;
+    } catch (err) {
+      console.warn("[Anima] Falha ao extrair pose:", err);
+      throw err;
+    }
   });
   ipcMain.handle("app:getWorkflowDefaults", async (_event, diffusionModel) => {
     return workflowManager.getDefaults(diffusionModel);
@@ -1224,8 +1559,9 @@ function setupIPC() {
   ipcMain.handle("file:readImage", async (_event, filePath) => {
     try {
       const historyBaseDir = join(app.getPath("userData"), "history");
-      if (!isPathSafe(filePath, historyBaseDir)) {
-        console.warn("[Anima] Tentativa de leitura de arquivo fora do histórico:", filePath);
+      const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath];
+      if (!allowedBases.some((base) => isPathSafe(filePath, base))) {
+        console.warn("[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:", filePath);
         return null;
       }
       const buffer = readFileSync(filePath);

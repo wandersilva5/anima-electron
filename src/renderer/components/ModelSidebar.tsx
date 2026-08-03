@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useFilterModels } from '../hooks/useFilterModels'
 import { useRefreshLoras } from '../hooks/useRefreshLoras'
 import { Search, RefreshCw, Check, ChevronDown, ChevronUp } from 'lucide-react'
-import { MODEL_PROFILES, MODEL_IDS } from '../../shared/modelProfiles'
+import { MODEL_PROFILES, MODEL_IDS } from '@shared/modelProfiles'
 import type { DiffusionModelId, ModelInfo, LoraInfo } from '@shared/types'
 import { SafeImage } from './SafeImage'
 

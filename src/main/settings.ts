@@ -3,10 +3,26 @@ import { join } from 'path'
 import { app } from 'electron'
 import type { AppSettings } from '@shared/types'
 
+const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188'
+
+function detectComfyUIPath(): string {
+  const candidates = [
+    join(process.env.LOCALAPPDATA || '', 'ComfyUI_windows_portable'),
+    'C:\\ComfyUI_windows_portable',
+    'D:\\ComfyUI_windows_portable',
+    join(process.env.USERPROFILE || '', 'ComfyUI_windows_portable')
+  ]
+  for (const p of candidates) {
+    if (existsSync(join(p, 'ComfyUI'))) return p
+  }
+  return ''
+}
+
 const DEFAULTS: AppSettings = {
-  comfyUIPath: 'D:\\ComfyUI_windows_portable',
+  comfyUIPath: detectComfyUIPath(),
   modelsPath: '',
-  lorasPath: ''
+  lorasPath: '',
+  comfyUrl: DEFAULT_COMFY_URL
 }
 
 export class SettingsManager {

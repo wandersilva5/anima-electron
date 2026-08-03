@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock } from 'lucide-react'
-import { MODEL_PROFILES } from '../../shared/modelProfiles'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 
@@ -63,6 +63,10 @@ export function RecreateTab() {
   }, [])
 
   const handlePaste = useCallback((e: ClipboardEvent) => {
+    const target = e.target as HTMLElement | null
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return
+    }
     const items = e.clipboardData?.items
     if (!items) return
     for (let i = 0; i < items.length; i++) {
