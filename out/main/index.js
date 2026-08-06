@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join, dirname, sep } from "path";
-import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync, statSync } from "fs";
+import { join, dirname, normalize, resolve, sep } from "path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, rmSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
@@ -138,7 +138,7 @@ class ComfyUIClient {
             }
           }
         }
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       }
       throw new Error("Timeout esperando resultado do ComfyUI");
     } finally {
@@ -412,20 +412,21 @@ class ComfyLauncher {
     }
   }
   stop() {
-    if (this.process) {
-      this.process.kill("SIGTERM");
-      setTimeout(() => {
-        if (this.process) {
-          try {
-            this.process.kill("SIGKILL");
-          } catch {
-          }
-        }
-      }, 5e3);
-      this.process = null;
-      this._running = false;
-      console.log("[Anima] ComfyUI finalizado");
+    const proc = this.process;
+    if (!proc) return;
+    this.process = null;
+    this._running = false;
+    try {
+      proc.kill("SIGTERM");
+    } catch {
     }
+    setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+      }
+    }, 5e3);
+    console.log("[Anima] ComfyUI finalizado");
   }
 }
 const MODEL_PROFILES = {
@@ -575,16 +576,24 @@ class WorkflowManager {
         console.log("[WorkflowManager] ComfyUI-GGUF loader.py already supports qwen3");
         return;
       }
-      const patched = content.replace('"qwen2vl"', '"qwen2vl", "qwen3"').replace("'qwen2vl'", "'qwen2vl', 'qwen3'").replace(
-        /(if\s+arch\s+in\s+\{[^}]*?)(qwen2vl)([^}]*?\}:)/g,
-        '$1$2, "qwen3"$3'
-      );
+      const backupPath = loaderPath + ".anima.bak";
+      if (!existsSync(backupPath)) {
+        writeFileSync(backupPath, content, "utf-8");
+      }
+      const lines = content.split("\n");
+      const patchedLines = lines.map((line) => {
+        if (line.includes("qwen2vl") && !line.includes("qwen3")) {
+          return line.replace('"qwen2vl"', '"qwen2vl", "qwen3"').replace("'qwen2vl'", "'qwen2vl', 'qwen3'");
+        }
+        return line;
+      });
+      const patched = patchedLines.join("\n");
       if (patched === content) {
-        console.warn("[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (unrecognized format)");
+        console.warn("[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (no qwen2vl line found)");
         return;
       }
       writeFileSync(loaderPath, patched, "utf-8");
-      console.log("[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support");
+      console.log("[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support (backup criado em loader.py.anima.bak)");
     } catch (err) {
       console.warn("[WorkflowManager] Failed to patch ComfyUI-GGUF loader.py:", err);
     }
@@ -708,7 +717,9 @@ class WorkflowManager {
           if (node.id === data.positiveNodeId) {
             widgetValues[0] = params.prompt;
           } else if (node.id === data.negativeNodeId) {
-            widgetValues[0] = params.negativePrompt;
+            if (params.negativePrompt) {
+              widgetValues[0] = params.negativePrompt;
+            }
           }
           break;
         }
@@ -752,7 +763,7 @@ class WorkflowManager {
         case "SaveImage": {
           const now = /* @__PURE__ */ new Date();
           const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-          widgetValues[0] = `[${params.filenamePrefix || "anima"}][${ts}]`;
+          widgetValues[0] = `${params.filenamePrefix || "anima"}_${ts}`;
           break;
         }
       }
@@ -969,7 +980,17 @@ class LoraScanner {
   }
   scan(subfolder) {
     const baseLoraDir = this.settingsManager.resolvedLorasPath;
-    const scanDir = subfolder ? join(baseLoraDir, subfolder) : baseLoraDir;
+    let scanDir = baseLoraDir;
+    if (subfolder) {
+      const base = normalize(resolve(baseLoraDir)).toLowerCase();
+      const resolved = normalize(resolve(baseLoraDir, subfolder)).toLowerCase();
+      const isInside = resolved === base || resolved.startsWith(base + sep);
+      if (!isInside) {
+        console.warn("[LoraScanner] Tentativa de path traversal:", subfolder);
+        return [];
+      }
+      scanDir = resolved;
+    }
     try {
       if (!existsSync(scanDir)) return [];
       return this.scanRecursive(scanDir, "", subfolder || "");
@@ -1112,6 +1133,7 @@ let loraScanner;
 let modelScanner;
 let statusPollInterval = null;
 let statusPollActive = false;
+let statusPollOnline = false;
 function buildTimestamp() {
   const now = /* @__PURE__ */ new Date();
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
@@ -1133,19 +1155,21 @@ function saveImagesToHistory(promptId, images, params, prefix = "anima") {
     if (!existsSync(historyDir)) {
       mkdirSync(historyDir, { recursive: true });
     }
-    let metadata = null;
+    const metadata = {
+      params,
+      timestamp: Date.now(),
+      images: []
+    };
     for (const img of images) {
       const timestamp = buildTimestamp();
       const ext = getImageExt(img.filename);
-      const newFilename = `[${prefix}][${timestamp}].${ext}`;
+      const newFilename = `${prefix}_${timestamp}.${ext}`;
       const imgPath = join(historyDir, newFilename);
       writeFileSync(imgPath, Buffer.from(img.data, "base64"));
       savedImages.push({ ...img, filePath: imgPath, filename: newFilename });
-      metadata = { params, filename: newFilename, timestamp: Date.now() };
+      metadata.images.push({ filename: newFilename });
     }
-    if (metadata) {
-      writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-    }
+    writeFileSync(join(historyDir, "metadata.json"), JSON.stringify(metadata, null, 2));
     console.log(`[Anima] Imagens salvas em: ${historyDir}`);
   } catch (err) {
     console.warn(`[Anima] Erro ao salvar histórico em ${historyDir}:`, err);
@@ -1174,9 +1198,17 @@ async function uploadImageToComfyUI(base64, filename, comfyInputDir, baseUrl) {
   }
 }
 function isPathSafe(targetPath, allowedBase) {
-  const normalized = join(targetPath);
-  const base = join(allowedBase);
-  return normalized.startsWith(base);
+  const resolvedTarget = normalize(resolve(targetPath)).toLowerCase();
+  const resolvedBase = normalize(resolve(allowedBase)).toLowerCase();
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + sep);
+}
+function isMainWindowSender(event) {
+  return mainWindow !== null && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+}
+function requireMainWindow(event) {
+  if (!isMainWindowSender(event)) {
+    throw new Error("IPC não autorizado: remetente inválido");
+  }
 }
 const VNCCS_CANVAS = { width: 512, height: 1536 };
 const COCO_TO_VNCCS = {
@@ -1259,12 +1291,13 @@ function sanitizeGenerationParams(raw) {
     return Math.min(max, Math.max(min, n));
   };
   const str = (v, fallback = "") => typeof v === "string" ? v : fallback;
+  const strOrNull = (v) => typeof v === "string" && v ? v : null;
   return {
-    ...p,
+    diffusionModel: str(p.diffusionModel, "anima"),
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
-    loraName: p.loraName ? str(p.loraName) : null,
+    loraName: strOrNull(p.loraName),
     filenamePrefix: str(p.filenamePrefix, "anima"),
     seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
     steps: Math.floor(num(p.steps, 20, 1, 50)),
@@ -1273,7 +1306,14 @@ function sanitizeGenerationParams(raw) {
     height: Math.floor(num(p.height, 1152, 64, 4096)),
     loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
     loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
-    denoise: p.denoise !== void 0 ? num(p.denoise, 1, 0.05, 1) : void 0
+    denoise: p.denoise !== void 0 ? num(p.denoise, 1, 0.05, 1) : void 0,
+    imageBase64: typeof p.imageBase64 === "string" ? p.imageBase64 : void 0,
+    maskBase64: typeof p.maskBase64 === "string" ? p.maskBase64 : void 0,
+    poseImageBase64: typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : void 0,
+    poseData: typeof p.poseData === "string" ? p.poseData : void 0,
+    poseStrength: p.poseStrength !== void 0 ? num(p.poseStrength, 1, 0.05, 2) : void 0,
+    lineThickness: p.lineThickness !== void 0 ? Math.floor(num(p.lineThickness, 2, 1, 10)) : void 0,
+    safeZone: p.safeZone !== void 0 ? Math.floor(num(p.safeZone, 0, 0, 100)) : void 0
   };
 }
 function stopStatusPoll() {
@@ -1282,24 +1322,34 @@ function stopStatusPoll() {
     statusPollInterval = null;
   }
   statusPollActive = false;
+  statusPollOnline = false;
 }
 function startStatusPoll() {
   if (statusPollActive) return;
   statusPollActive = true;
-  statusPollInterval = setInterval(async () => {
-    const status = await comfyClient.getStatus();
-    mainWindow?.webContents.send("comfyui:statusUpdate", {
+  const poll = async () => {
+    if (!statusPollActive) return;
+    let status;
+    try {
+      status = await comfyClient.getStatus();
+    } catch (err) {
+      console.warn("[Anima] Falha ao consultar status do ComfyUI:", err);
+      return;
+    }
+    if (!statusPollActive || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("comfyui:statusUpdate", {
       ...status,
       launching: comfyLauncher.running && !status.online
     });
-    if (status.online && statusPollInterval) {
-      clearInterval(statusPollInterval);
-      statusPollInterval = setInterval(async () => {
-        const s = await comfyClient.getStatus();
-        mainWindow?.webContents.send("comfyui:statusUpdate", { ...s, launching: false });
-      }, 15e3);
+    if (status.online && !statusPollOnline) {
+      statusPollOnline = true;
+      if (statusPollInterval) clearInterval(statusPollInterval);
+      statusPollInterval = setInterval(poll, 15e3);
+    } else if (!status.online) {
+      statusPollOnline = false;
     }
-  }, 2e3);
+  };
+  statusPollInterval = setInterval(poll, 2e3);
 }
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -1335,13 +1385,15 @@ function setupIPC() {
   const settings = settingsManager.get();
   comfyClient = new ComfyUIClient(settings.comfyUrl || "http://127.0.0.1:8188");
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath);
-  workflowManager = new WorkflowManager(join(__dirname, "../../workflows"), settings.comfyUIPath);
+  const workflowsDir = app.isPackaged ? join(process.resourcesPath, "workflows") : join(__dirname, "../../workflows");
+  workflowManager = new WorkflowManager(workflowsDir, settings.comfyUIPath);
   loraScanner = new LoraScanner(settingsManager);
   modelScanner = new ModelScanner(settingsManager);
   ipcMain.handle("comfyui:status", async () => {
     return comfyClient.getStatus();
   });
-  ipcMain.handle("comfyui:generate", async (_event, rawParams) => {
+  ipcMain.handle("comfyui:generate", async (event, rawParams) => {
+    requireMainWindow(event);
     const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando geração...");
     console.log("[Anima] Modelo:", params.modelName, "| LoRA:", params.loraName ?? "nenhum");
@@ -1368,7 +1420,8 @@ function setupIPC() {
     const savedImages = saveImagesToHistory(response.prompt_id, images, params, params.filenamePrefix || "anima");
     return { promptId: response.prompt_id, images: savedImages };
   });
-  ipcMain.handle("comfyui:generateImprove", async (_event, rawParams) => {
+  ipcMain.handle("comfyui:generateImprove", async (event, rawParams) => {
+    requireMainWindow(event);
     const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando melhoria de imagem (img2img)...");
     console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
@@ -1418,7 +1471,8 @@ function setupIPC() {
     const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
     return { promptId: response.prompt_id, images: savedImages };
   });
-  ipcMain.handle("comfyui:captionImage", async (_event, params) => {
+  ipcMain.handle("comfyui:captionImage", async (event, params) => {
+    requireMainWindow(event);
     console.log("[Anima] Iniciando captioning de imagem...");
     if (!params.imageBase64) {
       throw new Error("Imagem não fornecida");
@@ -1449,7 +1503,8 @@ function setupIPC() {
   ipcMain.handle("comfyui:setUrl", async (_event, url) => {
     comfyClient.setUrl(url);
   });
-  ipcMain.handle("comfyui:launch", async () => {
+  ipcMain.handle("comfyui:launch", async (event) => {
+    requireMainWindow(event);
     const status = await comfyClient.getStatus();
     if (status.online) {
       startStatusPoll();
@@ -1464,8 +1519,17 @@ function setupIPC() {
   ipcMain.handle("settings:get", async () => {
     return settingsManager.get();
   });
-  ipcMain.handle("settings:set", async (_event, newSettings) => {
-    const updated = settingsManager.set(newSettings);
+  ipcMain.handle("settings:set", async (event, newSettings) => {
+    requireMainWindow(event);
+    const clean = {};
+    if (newSettings && typeof newSettings === "object") {
+      const s2 = newSettings;
+      if (typeof s2.comfyUIPath === "string") clean.comfyUIPath = s2.comfyUIPath;
+      if (typeof s2.modelsPath === "string") clean.modelsPath = s2.modelsPath;
+      if (typeof s2.lorasPath === "string") clean.lorasPath = s2.lorasPath;
+      if (typeof s2.comfyUrl === "string" && /^https?:\/\//.test(s2.comfyUrl)) clean.comfyUrl = s2.comfyUrl;
+    }
+    const updated = settingsManager.set(clean);
     const s = settingsManager.get();
     comfyLauncher.updatePath(s.comfyUIPath);
     loraScanner.updatePath(settingsManager);
@@ -1493,7 +1557,8 @@ function setupIPC() {
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
   });
-  ipcMain.handle("pose:extractFromImage", async (_event, imagePath) => {
+  ipcMain.handle("pose:extractFromImage", async (event, imagePath) => {
+    requireMainWindow(event);
     try {
       if (!imagePath || typeof imagePath !== "string") {
         throw new Error("Caminho de imagem inválido");
@@ -1501,8 +1566,17 @@ function setupIPC() {
       if (!existsSync(imagePath)) {
         throw new Error("Arquivo de imagem não encontrado");
       }
+      const extMatch = /\.([a-z0-9]+)$/i.exec(imagePath);
+      const ext = extMatch ? extMatch[1].toLowerCase() : "";
+      const ALLOWED_EXTS = ["png", "jpg", "jpeg", "webp", "bmp"];
+      if (!ALLOWED_EXTS.includes(ext)) {
+        throw new Error("Tipo de arquivo não suportado para extração de pose");
+      }
+      const size = statSync(imagePath).size;
+      if (size > 50 * 1024 * 1024) {
+        throw new Error("Imagem muito grande para extração de pose");
+      }
       const buffer = readFileSync(imagePath);
-      const ext = imagePath.endsWith(".png") ? "png" : imagePath.endsWith(".webp") ? "webp" : "jpg";
       const inputFilename = `anima-pose-ref-${Date.now()}.${ext}`;
       const settings2 = settingsManager.get();
       const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
@@ -1550,13 +1624,17 @@ function setupIPC() {
       throw err;
     }
   });
-  ipcMain.handle("app:getWorkflowDefaults", async (_event, diffusionModel) => {
-    return workflowManager.getDefaults(diffusionModel);
+  ipcMain.handle("app:getWorkflowDefaults", async (event, diffusionModel) => {
+    requireMainWindow(event);
+    const validModels = new Set(Object.keys(MODEL_PROFILES));
+    const model = typeof diffusionModel === "string" && validModels.has(diffusionModel) ? diffusionModel : "anima";
+    return workflowManager.getDefaults(model);
   });
   ipcMain.handle("app:getModelProfiles", async () => {
     return MODEL_PROFILES;
   });
-  ipcMain.handle("file:readImage", async (_event, filePath) => {
+  ipcMain.handle("file:readImage", async (event, filePath) => {
+    requireMainWindow(event);
     try {
       const historyBaseDir = join(app.getPath("userData"), "history");
       const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath];
@@ -1564,9 +1642,27 @@ function setupIPC() {
         console.warn("[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:", filePath);
         return null;
       }
+      const ALLOWED_EXTS = {
+        png: "png",
+        jpg: "jpeg",
+        jpeg: "jpeg",
+        webp: "webp",
+        bmp: "bmp"
+      };
+      const extMatch = /\.([a-z0-9]+)$/i.exec(filePath);
+      const ext = extMatch ? extMatch[1].toLowerCase() : "";
+      const mime = ALLOWED_EXTS[ext];
+      if (!mime) {
+        console.warn("[Anima] Extensão de arquivo não permitida para leitura:", filePath);
+        return null;
+      }
+      const size = statSync(filePath).size;
+      if (size > 50 * 1024 * 1024) {
+        console.warn("[Anima] Arquivo muito grande para leitura:", filePath, size);
+        return null;
+      }
       const buffer = readFileSync(filePath);
-      const ext = filePath.endsWith(".png") ? "png" : "jpeg";
-      return `data:image/${ext};base64,${buffer.toString("base64")}`;
+      return `data:image/${mime};base64,${buffer.toString("base64")}`;
     } catch {
       return null;
     }
@@ -1583,15 +1679,18 @@ function setupIPC() {
         const metaPath = join(dirPath, "metadata.json");
         if (!existsSync(metaPath)) continue;
         const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
-        const imgPath = join(dirPath, meta.filename);
-        if (!existsSync(imgPath)) continue;
-        items.push({
-          id: dir,
-          filePath: imgPath,
-          filename: meta.filename,
-          params: meta.params,
-          timestamp: meta.timestamp
-        });
+        const filenames = Array.isArray(meta.images) ? meta.images.map((i) => i.filename).filter(Boolean) : meta.filename ? [meta.filename] : [];
+        for (const filename of filenames) {
+          const imgPath = join(dirPath, filename);
+          if (!existsSync(imgPath)) continue;
+          items.push({
+            id: dir,
+            filePath: imgPath,
+            filename,
+            params: meta.params,
+            timestamp: meta.timestamp
+          });
+        }
       } catch (err) {
         console.warn(`[Anima] Erro ao ler histórico ${dir}:`, err);
       }
@@ -1599,7 +1698,8 @@ function setupIPC() {
     items.sort((a, b) => b.timestamp - a.timestamp);
     return items;
   });
-  ipcMain.handle("file:deleteHistoryItems", async (_event, items) => {
+  ipcMain.handle("file:deleteHistoryItems", async (event, items) => {
+    requireMainWindow(event);
     const historyBaseDir = join(app.getPath("userData"), "history");
     for (const { id, filePath } of items) {
       if (filePath && existsSync(filePath)) {

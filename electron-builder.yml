@@ -4,6 +4,9 @@ directories:
   output: release
 files:
   - out/**/*
+extraResources:
+  - from: workflows
+    to: workflows
 win:
   target:
     - target: nsis

@@ -136,19 +136,32 @@ export class WorkflowManager {
         console.log('[WorkflowManager] ComfyUI-GGUF loader.py already supports qwen3')
         return
       }
-      const patched = content
-        .replace('"qwen2vl"', '"qwen2vl", "qwen3"')
-        .replace("'qwen2vl'", "'qwen2vl', 'qwen3'")
-        .replace(
-          /(if\s+arch\s+in\s+\{[^}]*?)(qwen2vl)([^}]*?\}:)/g,
-          '$1$2, "qwen3"$3'
-        )
+
+      // Backup antes de modificar
+      const backupPath = loaderPath + '.anima.bak'
+      if (!existsSync(backupPath)) {
+        writeFileSync(backupPath, content, 'utf-8')
+      }
+
+      // Patch apenas linhas que contêm qwen2vl (evita regex frágil no arquivo inteiro)
+      const lines = content.split('\n')
+      const patchedLines = lines.map(line => {
+        if (line.includes('qwen2vl') && !line.includes('qwen3')) {
+          return line
+            .replace('"qwen2vl"', '"qwen2vl", "qwen3"')
+            .replace("'qwen2vl'", "'qwen2vl', 'qwen3'")
+        }
+        return line
+      })
+      const patched = patchedLines.join('\n')
+
       if (patched === content) {
-        console.warn('[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (unrecognized format)')
+        console.warn('[WorkflowManager] Could not patch ComfyUI-GGUF loader.py (no qwen2vl line found)')
         return
       }
+
       writeFileSync(loaderPath, patched, 'utf-8')
-      console.log('[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support')
+      console.log('[WorkflowManager] ComfyUI-GGUF loader.py patched for qwen3 support (backup criado em loader.py.anima.bak)')
     } catch (err) {
       console.warn('[WorkflowManager] Failed to patch ComfyUI-GGUF loader.py:', err)
     }
@@ -333,7 +346,7 @@ export class WorkflowManager {
         case 'SaveImage': {
           const now = new Date()
           const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
-          widgetValues[0] = `[${params.filenamePrefix || 'anima'}][${ts}]`
+          widgetValues[0] = `${params.filenamePrefix || 'anima'}_${ts}`
           break
         }
       }

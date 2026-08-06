@@ -9,6 +9,7 @@ import { SafeImage } from './SafeImage'
 interface ModelSidebarProps {
   diffusionModel: DiffusionModelId
   onDiffusionModelChange: (id: DiffusionModelId) => void
+  hideDiffusionSelector?: boolean
   modelName: string
   onModelChange: (name: string) => void
   models: ModelInfo[]
@@ -25,6 +26,7 @@ interface ModelSidebarProps {
 export function ModelSidebar({
   diffusionModel,
   onDiffusionModelChange,
+  hideDiffusionSelector,
   modelName,
   onModelChange,
   models,
@@ -55,37 +57,39 @@ export function ModelSidebar({
 
   return (
     <>
-      <div>
-        <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-          Modelo de Difusão
-        </label>
-        <div className="grid grid-cols-3 gap-2">
-          {MODEL_IDS.map((id) => {
-            const prof = MODEL_PROFILES[id]
-            const isSelected = diffusionModel === id
-            return (
-              <button
-                key={id}
-                onClick={() => onDiffusionModelChange(id)}
-                className={`
-                  flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
-                  ${isSelected
-                    ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
-                    : 'border-border bg-surface hover:border-text-muted text-text-secondary'
-                  }
-                `}
-              >
-                <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
-                  {prof.label}
-                </span>
-                <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
-                  {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : 'GGUF Flux'}
-                </span>
-              </button>
-            )
-          })}
+      {!hideDiffusionSelector && (
+        <div>
+          <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+            Modelo de Difusão
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {MODEL_IDS.map((id) => {
+              const prof = MODEL_PROFILES[id]
+              const isSelected = diffusionModel === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => onDiffusionModelChange(id)}
+                  className={`
+                    flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
+                    ${isSelected
+                      ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
+                      : 'border-border bg-surface hover:border-text-muted text-text-secondary'
+                    }
+                  `}
+                >
+                  <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
+                    {prof.label}
+                  </span>
+                  <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
+                    {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : 'GGUF Flux'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <div>
         <button

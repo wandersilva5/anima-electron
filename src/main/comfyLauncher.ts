@@ -85,17 +85,19 @@ export class ComfyLauncher {
   }
 
   stop(): void {
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      // Force kill after 5 seconds
-      setTimeout(() => {
-        if (this.process) {
-          try { this.process.kill('SIGKILL') } catch {}
-        }
-      }, 5000)
-      this.process = null
-      this._running = false
-      console.log('[Anima] ComfyUI finalizado')
-    }
+    const proc = this.process
+    if (!proc) return
+    this.process = null
+    this._running = false
+
+    try {
+      proc.kill('SIGTERM')
+    } catch {}
+
+    // Force kill after 5 seconds (referência local, sobrevive ao null do this.process)
+    setTimeout(() => {
+      try { proc.kill('SIGKILL') } catch {}
+    }, 5000)
+    console.log('[Anima] ComfyUI finalizado')
   }
 }

@@ -1,5 +1,5 @@
 import { readdirSync, existsSync } from 'fs'
-import { join, sep } from 'path'
+import { join, sep, resolve, normalize } from 'path'
 import type { LoraInfo } from '@shared/types'
 import type { SettingsManager } from './settings'
 import { findPreview } from './previewFinder'
@@ -17,7 +17,20 @@ export class LoraScanner {
 
   scan(subfolder?: string): LoraInfo[] {
     const baseLoraDir = this.settingsManager.resolvedLorasPath
-    const scanDir = subfolder ? join(baseLoraDir, subfolder) : baseLoraDir
+    let scanDir = baseLoraDir
+
+    if (subfolder) {
+      // Impede path traversal: o subfolder deve resolver DENTRO da pasta base
+      const base = normalize(resolve(baseLoraDir)).toLowerCase()
+      const resolved = normalize(resolve(baseLoraDir, subfolder)).toLowerCase()
+      const isInside = resolved === base || resolved.startsWith(base + sep)
+      if (!isInside) {
+        console.warn('[LoraScanner] Tentativa de path traversal:', subfolder)
+        return []
+      }
+      scanDir = resolved
+    }
+
     try {
       if (!existsSync(scanDir)) return []
       return this.scanRecursive(scanDir, '', subfolder || '')

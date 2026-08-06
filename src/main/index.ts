@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join } from 'path'
+import { join, resolve, normalize, sep } from 'path'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
@@ -19,6 +19,7 @@ let modelScanner: ModelScanner
 
 let statusPollInterval: ReturnType<typeof setInterval> | null = null
 let statusPollActive = false
+let statusPollOnline = false
 
 function buildTimestamp(): string {
   const now = new Date()
@@ -50,21 +51,23 @@ function saveImagesToHistory(
       mkdirSync(historyDir, { recursive: true })
     }
 
-    let metadata: Record<string, unknown> | null = null
+    const metadata: { params: Record<string, unknown>; timestamp: number; images: { filename: string }[] } = {
+      params,
+      timestamp: Date.now(),
+      images: []
+    }
     for (const img of images) {
       const timestamp = buildTimestamp()
       const ext = getImageExt(img.filename)
-      const newFilename = `[${prefix}][${timestamp}].${ext}`
+      const newFilename = `${prefix}_${timestamp}.${ext}`
       const imgPath = join(historyDir, newFilename)
       writeFileSync(imgPath, Buffer.from(img.data, 'base64'))
       savedImages.push({ ...img, filePath: imgPath, filename: newFilename })
 
-      metadata = { params, filename: newFilename, timestamp: Date.now() }
+      metadata.images.push({ filename: newFilename })
     }
 
-    if (metadata) {
-      writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
-    }
+    writeFileSync(join(historyDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
 
     console.log(`[Anima] Imagens salvas em: ${historyDir}`)
   } catch (err) {
@@ -103,9 +106,19 @@ async function uploadImageToComfyUI(
 }
 
 function isPathSafe(targetPath: string, allowedBase: string): boolean {
-  const normalized = join(targetPath)
-  const base = join(allowedBase)
-  return normalized.startsWith(base)
+  const resolvedTarget = normalize(resolve(targetPath)).toLowerCase()
+  const resolvedBase = normalize(resolve(allowedBase)).toLowerCase()
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + sep)
+}
+
+function isMainWindowSender(event: Electron.IpcMainInvokeEvent): boolean {
+  return mainWindow !== null && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+}
+
+function requireMainWindow(event: Electron.IpcMainInvokeEvent): void {
+  if (!isMainWindowSender(event)) {
+    throw new Error('IPC não autorizado: remetente inválido')
+  }
 }
 
 const VNCCS_CANVAS = { width: 512, height: 1536 }
@@ -199,12 +212,15 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
     return Math.min(max, Math.max(min, n))
   }
   const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
+  const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
+
+  // Whitelist: apenas campos conhecidos são repassados (sem spread do objeto bruto)
   return {
-    ...p,
+    diffusionModel: str(p.diffusionModel, 'anima'),
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
-    loraName: p.loraName ? str(p.loraName) : null,
+    loraName: strOrNull(p.loraName),
     filenamePrefix: str(p.filenamePrefix, 'anima'),
     seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
     steps: Math.floor(num(p.steps, 20, 1, 50)),
@@ -213,7 +229,14 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
     height: Math.floor(num(p.height, 1152, 64, 4096)),
     loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
     loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
-    denoise: p.denoise !== undefined ? num(p.denoise, 1, 0.05, 1) : undefined
+    denoise: p.denoise !== undefined ? num(p.denoise, 1, 0.05, 1) : undefined,
+    imageBase64: typeof p.imageBase64 === 'string' ? p.imageBase64 : undefined,
+    maskBase64: typeof p.maskBase64 === 'string' ? p.maskBase64 : undefined,
+    poseImageBase64: typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : undefined,
+    poseData: typeof p.poseData === 'string' ? p.poseData : undefined,
+    poseStrength: p.poseStrength !== undefined ? num(p.poseStrength, 1, 0.05, 2) : undefined,
+    lineThickness: p.lineThickness !== undefined ? Math.floor(num(p.lineThickness, 2, 1, 10)) : undefined,
+    safeZone: p.safeZone !== undefined ? Math.floor(num(p.safeZone, 0, 0, 100)) : undefined
   }
 }
 
@@ -223,26 +246,40 @@ function stopStatusPoll(): void {
     statusPollInterval = null
   }
   statusPollActive = false
+  statusPollOnline = false
 }
 
 function startStatusPoll(): void {
   if (statusPollActive) return
   statusPollActive = true
 
-  statusPollInterval = setInterval(async () => {
-    const status = await comfyClient.getStatus()
-    mainWindow?.webContents.send('comfyui:statusUpdate', {
+  const poll = async (): Promise<void> => {
+    if (!statusPollActive) return
+    let status
+    try {
+      status = await comfyClient.getStatus()
+    } catch (err) {
+      console.warn('[Anima] Falha ao consultar status do ComfyUI:', err)
+      return
+    }
+    if (!statusPollActive || !mainWindow || mainWindow.isDestroyed()) return
+
+    mainWindow.webContents.send('comfyui:statusUpdate', {
       ...status,
       launching: comfyLauncher.running && !status.online
     })
-    if (status.online && statusPollInterval) {
-      clearInterval(statusPollInterval)
-      statusPollInterval = setInterval(async () => {
-        const s = await comfyClient.getStatus()
-        mainWindow?.webContents.send('comfyui:statusUpdate', { ...s, launching: false })
-      }, 15000)
+
+    // Transição para poll lento quando ficar online (com guarda contra duplicatas)
+    if (status.online && !statusPollOnline) {
+      statusPollOnline = true
+      if (statusPollInterval) clearInterval(statusPollInterval)
+      statusPollInterval = setInterval(poll, 15000)
+    } else if (!status.online) {
+      statusPollOnline = false
     }
-  }, 2000)
+  }
+
+  statusPollInterval = setInterval(poll, 2000)
 }
 
 function createWindow(): void {
@@ -284,7 +321,10 @@ function setupIPC(): void {
 
   comfyClient = new ComfyUIClient(settings.comfyUrl || 'http://127.0.0.1:8188')
   comfyLauncher = new ComfyLauncher(settings.comfyUIPath)
-  workflowManager = new WorkflowManager(join(__dirname, '../../workflows'), settings.comfyUIPath)
+  const workflowsDir = app.isPackaged
+    ? join(process.resourcesPath, 'workflows')
+    : join(__dirname, '../../workflows')
+  workflowManager = new WorkflowManager(workflowsDir, settings.comfyUIPath)
   loraScanner = new LoraScanner(settingsManager)
   modelScanner = new ModelScanner(settingsManager)
 
@@ -292,7 +332,8 @@ function setupIPC(): void {
     return comfyClient.getStatus()
   })
 
-  ipcMain.handle('comfyui:generate', async (_event, rawParams) => {
+  ipcMain.handle('comfyui:generate', async (event, rawParams) => {
+    requireMainWindow(event)
     const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams
     console.log('[Anima] Iniciando geração...')
     console.log('[Anima] Modelo:', params.modelName, '| LoRA:', params.loraName ?? 'nenhum')
@@ -321,7 +362,8 @@ function setupIPC(): void {
     return { promptId: response.prompt_id, images: savedImages }
   })
 
-  ipcMain.handle('comfyui:generateImprove', async (_event, rawParams) => {
+  ipcMain.handle('comfyui:generateImprove', async (event, rawParams) => {
+    requireMainWindow(event)
     const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams & { imageBase64?: string; maskBase64?: string; poseImageBase64?: string }
     console.log('[Anima] Iniciando melhoria de imagem (img2img)...')
     console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
@@ -382,7 +424,8 @@ function setupIPC(): void {
     return { promptId: response.prompt_id, images: savedImages }
   })
 
-  ipcMain.handle('comfyui:captionImage', async (_event, params: { imageBase64: string }) => {
+  ipcMain.handle('comfyui:captionImage', async (event, params: { imageBase64: string }) => {
+    requireMainWindow(event)
     console.log('[Anima] Iniciando captioning de imagem...')
 
     if (!params.imageBase64) {
@@ -422,7 +465,8 @@ function setupIPC(): void {
     comfyClient.setUrl(url)
   })
 
-  ipcMain.handle('comfyui:launch', async () => {
+  ipcMain.handle('comfyui:launch', async (event) => {
+    requireMainWindow(event)
     // First check if ComfyUI is already online
     const status = await comfyClient.getStatus()
     if (status.online) {
@@ -440,8 +484,17 @@ function setupIPC(): void {
     return settingsManager.get()
   })
 
-  ipcMain.handle('settings:set', async (_event, newSettings) => {
-    const updated = settingsManager.set(newSettings)
+  ipcMain.handle('settings:set', async (event, newSettings) => {
+    requireMainWindow(event)
+    const clean: Partial<import('@shared/types').AppSettings> = {}
+    if (newSettings && typeof newSettings === 'object') {
+      const s = newSettings as Record<string, unknown>
+      if (typeof s.comfyUIPath === 'string') clean.comfyUIPath = s.comfyUIPath
+      if (typeof s.modelsPath === 'string') clean.modelsPath = s.modelsPath
+      if (typeof s.lorasPath === 'string') clean.lorasPath = s.lorasPath
+      if (typeof s.comfyUrl === 'string' && /^https?:\/\//.test(s.comfyUrl)) clean.comfyUrl = s.comfyUrl
+    }
+    const updated = settingsManager.set(clean)
     const s = settingsManager.get()
     comfyLauncher.updatePath(s.comfyUIPath)
     loraScanner.updatePath(settingsManager)
@@ -474,7 +527,8 @@ function setupIPC(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('pose:extractFromImage', async (_event, imagePath: string) => {
+  ipcMain.handle('pose:extractFromImage', async (event, imagePath: string) => {
+    requireMainWindow(event)
     try {
       if (!imagePath || typeof imagePath !== 'string') {
         throw new Error('Caminho de imagem inválido')
@@ -482,8 +536,18 @@ function setupIPC(): void {
       if (!existsSync(imagePath)) {
         throw new Error('Arquivo de imagem não encontrado')
       }
+      // Apenas arquivos de imagem, evitando leitura de arquivos arbitrários grandes
+      const extMatch = /\.([a-z0-9]+)$/i.exec(imagePath)
+      const ext = extMatch ? extMatch[1].toLowerCase() : ''
+      const ALLOWED_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp']
+      if (!ALLOWED_EXTS.includes(ext)) {
+        throw new Error('Tipo de arquivo não suportado para extração de pose')
+      }
+      const size = statSync(imagePath).size
+      if (size > 50 * 1024 * 1024) {
+        throw new Error('Imagem muito grande para extração de pose')
+      }
       const buffer = readFileSync(imagePath)
-      const ext = imagePath.endsWith('.png') ? 'png' : imagePath.endsWith('.webp') ? 'webp' : 'jpg'
       const inputFilename = `anima-pose-ref-${Date.now()}.${ext}`
       const settings = settingsManager.get()
       const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
@@ -537,15 +601,21 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle('app:getWorkflowDefaults', async (_event, diffusionModel?: any) => {
-    return workflowManager.getDefaults(diffusionModel)
+  ipcMain.handle('app:getWorkflowDefaults', async (event, diffusionModel?: unknown) => {
+    requireMainWindow(event)
+    const validModels = new Set(Object.keys(MODEL_PROFILES))
+    const model = typeof diffusionModel === 'string' && validModels.has(diffusionModel)
+      ? (diffusionModel as import('@shared/types').DiffusionModelId)
+      : 'anima'
+    return workflowManager.getDefaults(model)
   })
 
   ipcMain.handle('app:getModelProfiles', async () => {
     return MODEL_PROFILES
   })
 
-  ipcMain.handle('file:readImage', async (_event, filePath: string) => {
+  ipcMain.handle('file:readImage', async (event, filePath: string) => {
+    requireMainWindow(event)
     try {
       const historyBaseDir = join(app.getPath('userData'), 'history')
       const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath]
@@ -553,9 +623,32 @@ function setupIPC(): void {
         console.warn('[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:', filePath)
         return null
       }
+
+      // Apenas extensões de imagem (evita ler .safetensors/.gguf multi-GB)
+      const ALLOWED_EXTS: Record<string, string> = {
+        png: 'png',
+        jpg: 'jpeg',
+        jpeg: 'jpeg',
+        webp: 'webp',
+        bmp: 'bmp'
+      }
+      const extMatch = /\.([a-z0-9]+)$/i.exec(filePath)
+      const ext = extMatch ? extMatch[1].toLowerCase() : ''
+      const mime = ALLOWED_EXTS[ext]
+      if (!mime) {
+        console.warn('[Anima] Extensão de arquivo não permitida para leitura:', filePath)
+        return null
+      }
+
+      // Limite de tamanho (50MB) para evitar OOM com arquivos grandes
+      const size = statSync(filePath).size
+      if (size > 50 * 1024 * 1024) {
+        console.warn('[Anima] Arquivo muito grande para leitura:', filePath, size)
+        return null
+      }
+
       const buffer = readFileSync(filePath)
-      const ext = filePath.endsWith('.png') ? 'png' : 'jpeg'
-      return `data:image/${ext};base64,${buffer.toString('base64')}`
+      return `data:image/${mime};base64,${buffer.toString('base64')}`
     } catch {
       return null
     }
@@ -576,16 +669,23 @@ function setupIPC(): void {
         if (!existsSync(metaPath)) continue
 
         const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
-        const imgPath = join(dirPath, meta.filename)
-        if (!existsSync(imgPath)) continue
 
-        items.push({
-          id: dir,
-          filePath: imgPath,
-          filename: meta.filename,
-          params: meta.params,
-          timestamp: meta.timestamp
-        })
+        // Novo formato: array de imagens. Antigo: campo `filename` único.
+        const filenames: string[] = Array.isArray(meta.images)
+          ? meta.images.map((i: { filename: string }) => i.filename).filter(Boolean)
+          : meta.filename ? [meta.filename] : []
+
+        for (const filename of filenames) {
+          const imgPath = join(dirPath, filename)
+          if (!existsSync(imgPath)) continue
+          items.push({
+            id: dir,
+            filePath: imgPath,
+            filename,
+            params: meta.params,
+            timestamp: meta.timestamp
+          })
+        }
       } catch (err) {
         console.warn(`[Anima] Erro ao ler histórico ${dir}:`, err)
       }
@@ -595,7 +695,8 @@ function setupIPC(): void {
     return items
   })
 
-  ipcMain.handle('file:deleteHistoryItems', async (_event, items: { id: string; filePath: string }[]) => {
+  ipcMain.handle('file:deleteHistoryItems', async (event, items: { id: string; filePath: string }[]) => {
+    requireMainWindow(event)
     const historyBaseDir = join(app.getPath('userData'), 'history')
     for (const { id, filePath } of items) {
       if (filePath && existsSync(filePath)) {

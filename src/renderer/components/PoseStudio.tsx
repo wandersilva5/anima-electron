@@ -4,9 +4,6 @@ import { Upload, Wand2, Trash2, Play, Sparkles, Clock } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
-import { renderOpenPose, type Joints } from '../utils/openposeRenderer'
-
-const POSE_CANVAS = { width: 512, height: 1536 }
 
 const DEFAULT_POSE_PROMPT = 'masterpiece, best quality, amazing quality, very aesthetic, same character, same outfit, highly detailed'
 
@@ -119,7 +116,7 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
 export function PoseStudio() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
-  const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
+  const selectedModel: DiffusionModelId = 'z-image'
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
   const [selectedLora, setSelectedLora] = useState<string | null>(null)
   const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
@@ -152,23 +149,20 @@ export function PoseStudio() {
   useEffect(() => {
     const compatible = models.filter((model) => {
       const name = model.name.toLowerCase()
-      if (selectedModel === 'anima') return name.includes('anima')
-      if (selectedModel === 'krea2') return name.includes('krea') || name.includes('krea2')
-      if (selectedModel === 'z-image') return name.includes('z-image') || name.includes('z_image')
-      return true
+      return name.includes('z-image') || name.includes('z_image')
     })
     if (compatible.length > 0 && !compatible.some(m => m.name === selectedCheckpoint)) {
       setSelectedCheckpoint(compatible[0].name)
     }
-  }, [models, selectedModel, selectedCheckpoint])
+  }, [models, selectedCheckpoint])
 
   useEffect(() => {
     setSelectedLora(null)
-    const folder = MODEL_PROFILES[selectedModel].loraFolder
+    const folder = MODEL_PROFILES['z-image'].loraFolder
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
     }).catch(() => {})
-  }, [selectedModel])
+  }, [])
 
   const detectPose = useCallback(async (src: string): Promise<Record<string, [number, number]> | null> => {
     setDetectingPose(true)
@@ -228,25 +222,6 @@ export function PoseStudio() {
     if (charInputRef.current) charInputRef.current.value = ''
   }, [])
 
-  const renderPoseToCharCanvas = useCallback(async (joints: Joints, charSrcData: string): Promise<string | null> => {
-    try {
-      const dims = await new Promise<{ width: number; height: number } | null>((resolve) => {
-        const img = new Image()
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
-        img.onerror = () => resolve(null)
-        img.src = charSrcData
-      })
-      if (!dims) return null
-      const w = Math.max(64, Math.round(dims.width / 8) * 8)
-      const h = Math.max(64, Math.round(dims.height / 8) * 8)
-      const canvas = renderOpenPose(joints, w, h, 3)
-      return canvas.toDataURL('image/png')
-    } catch (err) {
-      console.warn('[Anima] Falha ao renderizar pose:', err)
-      return null
-    }
-  }, [])
-
   const handleGenerate = useCallback(async () => {
     if (!poseSrc || !charSrc) return
 
@@ -297,13 +272,6 @@ export function PoseStudio() {
         return
       }
 
-      const poseData = {
-        canvas: { width: POSE_CANVAS.width, height: POSE_CANVAS.height },
-        poses: [{ joints: extracted }]
-      }
-
-      const poseImageBase64 = await renderPoseToCharCanvas(extracted, charSrc)
-
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: effectivePrompt,
@@ -320,10 +288,6 @@ export function PoseStudio() {
         imageBase64: charSrc,
         denoise,
         filenamePrefix: 'anima-pose',
-        poseData: JSON.stringify(poseData),
-        poseImageBase64,
-        lineThickness: 3,
-        safeZone: 100,
       } as any)
 
       const image = result.images?.[0]
@@ -361,7 +325,7 @@ export function PoseStudio() {
       setGenerating(false)
       setProgress(null)
     }
-  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedModel, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, denoise, profile, detectPose, addToHistory, renderPoseToCharCanvas])
+  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, denoise, profile, detectPose, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -448,7 +412,8 @@ export function PoseStudio() {
           <div className="p-4 space-y-4 overflow-y-auto">
             <ModelSidebar
               diffusionModel={selectedModel}
-              onDiffusionModelChange={setSelectedModel}
+              onDiffusionModelChange={() => {}}
+              hideDiffusionSelector
               modelName={selectedCheckpoint}
               onModelChange={setSelectedCheckpoint}
               models={models}

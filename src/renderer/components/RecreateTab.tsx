@@ -5,6 +5,35 @@ import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 
+const MAX_MODEL_DIM = 1536
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('Falha ao carregar a imagem para redimensionamento'))
+    img.src = src
+  })
+}
+
+async function resizeImageForModel(src: string): Promise<string> {
+  const img = await loadImage(src)
+  const w = img.naturalWidth
+  const h = img.naturalHeight
+  const longest = Math.max(w, h)
+  if (longest <= MAX_MODEL_DIM) return src
+  const scale = MAX_MODEL_DIM / longest
+  const nw = Math.max(16, Math.round((w * scale) / 16) * 16)
+  const nh = Math.max(16, Math.round((h * scale) / 16) * 16)
+  const canvas = document.createElement('canvas')
+  canvas.width = nw
+  canvas.height = nh
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return src
+  ctx.drawImage(img, 0, 0, nw, nh)
+  return canvas.toDataURL('image/png')
+}
+
 export function RecreateTab() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
@@ -131,6 +160,13 @@ export function RecreateTab() {
     }, 1000)
 
     try {
+      let imageBase64 = originalSrc
+      try {
+        imageBase64 = await resizeImageForModel(originalSrc)
+      } catch {
+        console.warn('[Anima] Redimensionamento falhou, usando imagem original')
+      }
+
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: captionText,
@@ -144,7 +180,7 @@ export function RecreateTab() {
         loraName: selectedLora,
         loraStrengthModel,
         loraStrengthClip,
-        imageBase64: originalSrc,
+        imageBase64,
         denoise,
         filenamePrefix: 'anima-recreate'
       })
