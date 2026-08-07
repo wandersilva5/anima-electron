@@ -1066,6 +1066,10 @@ class ModelScanner {
   }
 }
 const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
+function getProjectDataDir() {
+  const projectRoot = resolve(dirname(__dirname), "..");
+  return join(projectRoot, "data");
+}
 function detectComfyUIPath() {
   const candidates = [
     join(process.env.LOCALAPPDATA || "", "ComfyUI_windows_portable"),
@@ -1086,11 +1090,11 @@ const DEFAULTS = {
 };
 class SettingsManager {
   constructor() {
-    const userDataPath = app.getPath("userData");
-    if (!existsSync(userDataPath)) {
-      mkdirSync(userDataPath, { recursive: true });
+    const dataDir = getProjectDataDir();
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
     }
-    this.filePath = join(userDataPath, "settings.json");
+    this.filePath = join(dataDir, "settings.json");
     this.settings = this.load();
   }
   load() {
@@ -1134,6 +1138,10 @@ let modelScanner;
 let statusPollInterval = null;
 let statusPollActive = false;
 let statusPollOnline = false;
+function getHistoryBaseDir() {
+  const projectRoot = resolve(dirname(__dirname), "..");
+  return join(projectRoot, "history");
+}
 function buildTimestamp() {
   const now = /* @__PURE__ */ new Date();
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
@@ -1144,7 +1152,7 @@ function getImageExt(filename) {
   return "png";
 }
 function saveImagesToHistory(promptId, images, params, prefix = "anima") {
-  const historyBaseDir = join(app.getPath("userData"), "history");
+  const historyBaseDir = getHistoryBaseDir();
   const historyDir = join(historyBaseDir, promptId);
   const savedImages = [];
   try {
@@ -1636,7 +1644,7 @@ function setupIPC() {
   ipcMain.handle("file:readImage", async (event, filePath) => {
     requireMainWindow(event);
     try {
-      const historyBaseDir = join(app.getPath("userData"), "history");
+      const historyBaseDir = getHistoryBaseDir();
       const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath];
       if (!allowedBases.some((base) => isPathSafe(filePath, base))) {
         console.warn("[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:", filePath);
@@ -1668,7 +1676,7 @@ function setupIPC() {
     }
   });
   ipcMain.handle("file:loadHistory", async () => {
-    const historyBaseDir = join(app.getPath("userData"), "history");
+    const historyBaseDir = getHistoryBaseDir();
     if (!existsSync(historyBaseDir)) return [];
     const dirs = readdirSync(historyBaseDir);
     const items = [];
@@ -1700,7 +1708,7 @@ function setupIPC() {
   });
   ipcMain.handle("file:deleteHistoryItems", async (event, items) => {
     requireMainWindow(event);
-    const historyBaseDir = join(app.getPath("userData"), "history");
+    const historyBaseDir = getHistoryBaseDir();
     for (const { id, filePath } of items) {
       if (filePath && existsSync(filePath)) {
         if (!isPathSafe(filePath, historyBaseDir)) {
