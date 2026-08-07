@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join, resolve, normalize, sep } from 'path'
+import { join, resolve, normalize, sep, dirname } from 'path'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
@@ -21,6 +21,11 @@ let statusPollInterval: ReturnType<typeof setInterval> | null = null
 let statusPollActive = false
 let statusPollOnline = false
 
+function getHistoryBaseDir(): string {
+  const projectRoot = resolve(dirname(__dirname), '..')
+  return join(projectRoot, 'history')
+}
+
 function buildTimestamp(): string {
   const now = new Date()
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
@@ -38,7 +43,7 @@ function saveImagesToHistory(
   params: Record<string, unknown>,
   prefix = 'anima'
 ): { filename: string; data: string; filePath: string }[] {
-  const historyBaseDir = join(app.getPath('userData'), 'history')
+  const historyBaseDir = getHistoryBaseDir()
   const historyDir = join(historyBaseDir, promptId)
   const savedImages: { filename: string; data: string; filePath: string }[] = []
 
@@ -617,7 +622,7 @@ function setupIPC(): void {
   ipcMain.handle('file:readImage', async (event, filePath: string) => {
     requireMainWindow(event)
     try {
-      const historyBaseDir = join(app.getPath('userData'), 'history')
+      const historyBaseDir = getHistoryBaseDir()
       const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath]
       if (!allowedBases.some(base => isPathSafe(filePath, base))) {
         console.warn('[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:', filePath)
@@ -655,7 +660,7 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('file:loadHistory', async () => {
-    const historyBaseDir = join(app.getPath('userData'), 'history')
+    const historyBaseDir = getHistoryBaseDir()
     if (!existsSync(historyBaseDir)) return []
 
     const dirs = readdirSync(historyBaseDir)
@@ -697,7 +702,7 @@ function setupIPC(): void {
 
   ipcMain.handle('file:deleteHistoryItems', async (event, items: { id: string; filePath: string }[]) => {
     requireMainWindow(event)
-    const historyBaseDir = join(app.getPath('userData'), 'history')
+    const historyBaseDir = getHistoryBaseDir()
     for (const { id, filePath } of items) {
       if (filePath && existsSync(filePath)) {
         if (!isPathSafe(filePath, historyBaseDir)) {

@@ -1,9 +1,13 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
-import { app } from 'electron'
+import { join, resolve, dirname } from 'path'
 import type { AppSettings } from '@shared/types'
 
 const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188'
+
+function getProjectDataDir(): string {
+  const projectRoot = resolve(dirname(__dirname), '..')
+  return join(projectRoot, 'data')
+}
 
 function detectComfyUIPath(): string {
   const candidates = [
@@ -30,11 +34,11 @@ export class SettingsManager {
   private filePath: string
 
   constructor() {
-    const userDataPath = app.getPath('userData')
-    if (!existsSync(userDataPath)) {
-      mkdirSync(userDataPath, { recursive: true })
+    const dataDir = getProjectDataDir()
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true })
     }
-    this.filePath = join(userDataPath, 'settings.json')
+    this.filePath = join(dataDir, 'settings.json')
     this.settings = this.load()
   }
 
