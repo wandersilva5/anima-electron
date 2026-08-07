@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { join } from 'path'
+import { existsSync } from 'fs'
 
 export interface ComfyLaunchResult {
   success: boolean
@@ -28,8 +29,16 @@ export class ComfyLauncher {
       return { success: true, message: 'ComfyUI já está em execução' }
     }
 
+    if (!this.comfyDir) {
+      return { success: false, message: 'Pasta do ComfyUI não configurada. Defina o caminho em Configurações.' }
+    }
+
+    const python = join(this.comfyDir, 'python_embeded', 'python.exe')
+    if (!existsSync(python)) {
+      return { success: false, message: `Não foi possível encontrar ${python}. Verifique a pasta do ComfyUI nas configurações.` }
+    }
+
     try {
-      const python = join(this.comfyDir, 'python_embeded', 'python.exe')
       const mainPy = join(this.comfyDir, 'ComfyUI', 'main.py')
       this.process = spawn(python, [
         '-s', mainPy,

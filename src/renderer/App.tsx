@@ -30,6 +30,7 @@ function ChibiLogo() {
 export default function App() {
   const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setModels, loras, models, refreshLoras } = useSessionStore()
   const [initialized, setInitialized] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
   const [activeTab, setActiveTab] = useState<'generate' | 'improve' | 'pose' | 'recreate'>(() => {
     return (localStorage.getItem('anima-active-tab') as 'generate' | 'improve' | 'pose' | 'recreate') || 'generate'
   })
@@ -48,6 +49,10 @@ export default function App() {
       // resources will be empty
     }
   }, [setModels, refreshLoras])
+
+  useEffect(() => {
+    window.electronAPI.app.getVersion().then(setAppVersion).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const unsubStatus = window.electronAPI.comfyui.onStatusUpdate((data) => {
@@ -125,7 +130,9 @@ export default function App() {
             <ChibiLogo />
           </div>
           <span className="font-semibold text-sm">Anima</span>
-          <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-surface-tertiary">v2</span>
+          {appVersion && (
+            <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-surface-tertiary">v{appVersion}</span>
+          )}
         </div>
 
         <nav className="flex items-center gap-1 ml-6">

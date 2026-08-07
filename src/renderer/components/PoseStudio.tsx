@@ -4,6 +4,11 @@ import { Upload, Wand2, Trash2, Play, Sparkles, Clock } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
+import { renderOpenPose, type Joints } from '../utils/openposeRenderer'
+import { useGenerationProgress } from '../hooks/useGenerationProgress'
+import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
+
+const POSE_CANVAS = { width: 512, height: 1536 }
 
 const DEFAULT_POSE_PROMPT = 'masterpiece, best quality, amazing quality, very aesthetic, same character, same outfit, highly detailed'
 
@@ -135,26 +140,14 @@ export function PoseStudio() {
   const [error, setError] = useState<string | null>(null)
   const [dragOverPose, setDragOverPose] = useState(false)
   const [dragOverChar, setDragOverChar] = useState(false)
-  const [progress, setProgress] = useState<{ current: number; max: number } | null>(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [eta, setEta] = useState<number | null>(null)
+  const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
   const poseInputRef = useRef<HTMLInputElement>(null)
   const charInputRef = useRef<HTMLInputElement>(null)
-  const startTimeRef = useRef(0)
-  const progressTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const profile = MODEL_PROFILES[selectedModel]
 
-  useEffect(() => {
-    const compatible = models.filter((model) => {
-      const name = model.name.toLowerCase()
-      return name.includes('z-image') || name.includes('z_image')
-    })
-    if (compatible.length > 0 && !compatible.some(m => m.name === selectedCheckpoint)) {
-      setSelectedCheckpoint(compatible[0].name)
-    }
-  }, [models, selectedCheckpoint])
+  useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
   useEffect(() => {
     setSelectedLora(null)
@@ -222,6 +215,25 @@ export function PoseStudio() {
     if (charInputRef.current) charInputRef.current.value = ''
   }, [])
 
+  const renderPoseToCharCanvas = useCallback(async (joints: Joints, charSrcData: string): Promise<string | null> => {
+    try {
+      const dims = await new Promise<{ width: number; height: number } | null>((resolve) => {
+        const img = new Image()
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+        img.onerror = () => resolve(null)
+        img.src = charSrcData
+      })
+      if (!dims) return null
+      const w = Math.max(64, Math.round(dims.width / 8) * 8)
+      const h = Math.max(64, Math.round(dims.height / 8) * 8)
+      const canvas = renderOpenPose(joints, w, h, 3)
+      return canvas.toDataURL('image/png')
+    } catch (err) {
+      console.warn('[Anima] Falha ao renderizar pose:', err)
+      return null
+    }
+  }, [])
+
   const handleGenerate = useCallback(async () => {
     if (!poseSrc || !charSrc) return
 
@@ -243,27 +255,8 @@ export function PoseStudio() {
     setGenerating(true)
     setError(null)
     setResultSrc(null)
-    setProgress(null)
-    setElapsed(0)
-    setEta(null)
-    startTimeRef.current = Date.now()
 
-    const unsubProgress = window.electronAPI.comfyui.onProgress((data) => {
-      setProgress(data)
-      const now = Date.now()
-      const elapsedSec = (now - startTimeRef.current) / 1000
-      setElapsed(elapsedSec)
-      if (data.current > 0) {
-        const estimated = (elapsedSec / data.current) * data.max
-        setEta(estimated - elapsedSec)
-      }
-    })
-
-    progressTimerRef.current = setInterval(() => {
-      if (startTimeRef.current > 0) {
-        setElapsed((Date.now() - startTimeRef.current) / 1000)
-      }
-    }, 1000)
+    const stopProgress = startProgress()
 
     try {
       const extracted = poseJoints ?? await detectPose(poseSrc)
@@ -272,11 +265,19 @@ export function PoseStudio() {
         return
       }
 
+      const poseData = {
+        canvas: { width: POSE_CANVAS.width, height: POSE_CANVAS.height },
+        poses: [{ joints: extracted }]
+      }
+
+      const poseImageBase64 = await renderPoseToCharCanvas(extracted, charSrc)
+      const seed = Math.floor(Math.random() * 2147483647)
+
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: effectivePrompt,
         negativePrompt: '',
-        seed: Math.floor(Math.random() * 2147483647),
+        seed,
         steps: profile.defaults.steps,
         cfg: profile.defaults.cfg,
         width: profile.defaults.width,
@@ -288,7 +289,11 @@ export function PoseStudio() {
         imageBase64: charSrc,
         denoise,
         filenamePrefix: 'anima-pose',
-      } as any)
+        poseData: JSON.stringify(poseData),
+        poseImageBase64,
+        lineThickness: 3,
+        safeZone: 100
+      })
 
       const image = result.images?.[0]
       if (image) {
@@ -303,7 +308,7 @@ export function PoseStudio() {
             diffusionModel: selectedModel,
             prompt: effectivePrompt,
             negativePrompt: '',
-            seed: Math.floor(Math.random() * 2147483647),
+            seed,
             steps: profile.defaults.steps,
             cfg: profile.defaults.cfg,
             width: profile.defaults.width,
@@ -320,12 +325,10 @@ export function PoseStudio() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao gerar com pose')
     } finally {
-      unsubProgress()
-      clearInterval(progressTimerRef.current)
+      stopProgress()
       setGenerating(false)
-      setProgress(null)
     }
-  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, denoise, profile, detectPose, addToHistory])
+  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, denoise, profile, detectPose, renderPoseToCharCanvas, startProgress, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">

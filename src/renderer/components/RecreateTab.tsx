@@ -4,6 +4,8 @@ import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock } from 'lucide-r
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
+import { useGenerationProgress } from '../hooks/useGenerationProgress'
+import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
 
 const MAX_MODEL_DIM = 1536
 
@@ -51,25 +53,10 @@ export function RecreateTab() {
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [showingResult, setShowingResult] = useState(true)
-  const [progress, setProgress] = useState<{ current: number; max: number } | null>(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [eta, setEta] = useState<number | null>(null)
+  const { progress, elapsed, eta, startProgress } = useGenerationProgress()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const startTimeRef = useRef(0)
-  const progressTimerRef = useRef<ReturnType<typeof setInterval>>()
 
-  useEffect(() => {
-    const compatible = models.filter((model) => {
-      const name = model.name.toLowerCase()
-      if (selectedModel === 'anima') return name.includes('anima')
-      if (selectedModel === 'krea2') return name.includes('krea') || name.includes('krea2')
-      if (selectedModel === 'z-image') return name.includes('z-image') || name.includes('z_image')
-      return true
-    })
-    if (compatible.length > 0 && !compatible.some(m => m.name === selectedCheckpoint)) {
-      setSelectedCheckpoint(compatible[0].name)
-    }
-  }, [models, selectedModel, selectedCheckpoint])
+  useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
   useEffect(() => {
     setSelectedLora(null)
@@ -135,29 +122,9 @@ export function RecreateTab() {
     setError(null)
     setResultSrc(null)
     setShowingResult(true)
-    setProgress(null)
-    setElapsed(0)
-    setEta(null)
-    startTimeRef.current = Date.now()
 
+    const stopProgress = startProgress()
     const prof = MODEL_PROFILES[selectedModel]
-
-    const unsubProgress = window.electronAPI.comfyui.onProgress((data) => {
-      setProgress(data)
-      const now = Date.now()
-      const elapsedSec = (now - startTimeRef.current) / 1000
-      setElapsed(elapsedSec)
-      if (data.current > 0) {
-        const estimated = (elapsedSec / data.current) * data.max
-        setEta(estimated - elapsedSec)
-      }
-    })
-
-    progressTimerRef.current = setInterval(() => {
-      if (startTimeRef.current > 0) {
-        setElapsed((Date.now() - startTimeRef.current) / 1000)
-      }
-    }, 1000)
 
     try {
       let imageBase64 = originalSrc
@@ -167,11 +134,13 @@ export function RecreateTab() {
         console.warn('[Anima] Redimensionamento falhou, usando imagem original')
       }
 
+      const seed = Math.floor(Math.random() * 2147483647)
+
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: captionText,
         negativePrompt: '',
-        seed: Math.floor(Math.random() * 2147483647),
+        seed,
         steps: prof.defaults.steps,
         cfg: prof.defaults.cfg,
         width: prof.defaults.width,
@@ -198,7 +167,7 @@ export function RecreateTab() {
             diffusionModel: selectedModel,
             prompt: captionText,
             negativePrompt: '',
-            seed: Math.floor(Math.random() * 2147483647),
+            seed,
             steps: prof.defaults.steps,
             cfg: prof.defaults.cfg,
             width: prof.defaults.width,
@@ -215,12 +184,10 @@ export function RecreateTab() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao recriar imagem')
     } finally {
-      unsubProgress()
-      clearInterval(progressTimerRef.current)
+      stopProgress()
       setGenerating(false)
-      setProgress(null)
     }
-  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, addToHistory])
+  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, startProgress, addToHistory])
 
   const handleRecreate = useCallback(async () => {
     if (!originalSrc) return

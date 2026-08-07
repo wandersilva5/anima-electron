@@ -43,6 +43,7 @@ interface ElectronAPI {
   app: {
     getWorkflowDefaults: (diffusionModel?: string) => Promise<any>
     getModelProfiles: () => Promise<Record<string, import('./types').ModelProfile>>
+    getVersion: () => Promise<string>
   }
   file: {
     loadHistory: () => Promise<SavedHistoryItem[]>

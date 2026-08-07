@@ -2,8 +2,10 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { Upload, Wand2, Trash2, Paintbrush, X, ArrowLeftRight } from 'lucide-react'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
 import { ModelSidebar } from './ModelSidebar'
+import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
 
 export function ImageImprove() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
@@ -27,18 +29,7 @@ export function ImageImprove() {
   const brushRef = useRef<BrushCanvasHandle>(null)
 
   // Auto-select first compatible model
-  useEffect(() => {
-    const compatible = models.filter((model) => {
-      const name = model.name.toLowerCase()
-      if (selectedModel === 'anima') return name.includes('anima')
-      if (selectedModel === 'krea2') return name.includes('krea') || name.includes('krea2')
-      if (selectedModel === 'z-image') return name.includes('z-image') || name.includes('z_image')
-      return true
-    })
-    if (compatible.length > 0 && !compatible.some(m => m.name === selectedCheckpoint)) {
-      setSelectedCheckpoint(compatible[0].name)
-    }
-  }, [models, selectedModel, selectedCheckpoint])
+  useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -95,15 +86,18 @@ export function ImageImprove() {
         }
       }
 
+      const seed = Math.floor(Math.random() * 2147483647)
+      const prof = MODEL_PROFILES[selectedModel]
+
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt,
         negativePrompt: '',
-        seed: Math.floor(Math.random() * 2147483647),
-        steps: 20,
-        cfg: 5,
-        width: 1024,
-        height: 1024,
+        seed,
+        steps: prof.defaults.steps,
+        cfg: prof.defaults.cfg,
+        width: prof.defaults.width,
+        height: prof.defaults.height,
         modelName: selectedCheckpoint,
         loraName: selectedLora,
         loraStrengthModel,
@@ -127,11 +121,11 @@ export function ImageImprove() {
             diffusionModel: selectedModel,
             prompt,
             negativePrompt: '',
-            seed: Math.floor(Math.random() * 2147483647),
-            steps: 20,
-            cfg: 5,
-            width: 1024,
-            height: 1024,
+            seed,
+            steps: prof.defaults.steps,
+            cfg: prof.defaults.cfg,
+            width: prof.defaults.width,
+            height: prof.defaults.height,
             modelName: selectedCheckpoint,
             loraName: selectedLora,
             loraStrengthModel,

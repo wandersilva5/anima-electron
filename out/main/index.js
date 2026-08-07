@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join, dirname, normalize, resolve, sep } from "path";
-import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, rmSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, rmSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
 import __cjs_mod__ from "node:module";
@@ -361,8 +361,14 @@ class ComfyLauncher {
     if (this._running) {
       return { success: true, message: "ComfyUI já está em execução" };
     }
+    if (!this.comfyDir) {
+      return { success: false, message: "Pasta do ComfyUI não configurada. Defina o caminho em Configurações." };
+    }
+    const python = join(this.comfyDir, "python_embeded", "python.exe");
+    if (!existsSync(python)) {
+      return { success: false, message: `Não foi possível encontrar ${python}. Verifique a pasta do ComfyUI nas configurações.` };
+    }
     try {
-      const python = join(this.comfyDir, "python_embeded", "python.exe");
       const mainPy = join(this.comfyDir, "ComfyUI", "main.py");
       this.process = spawn(python, [
         "-s",
@@ -1090,12 +1096,25 @@ const DEFAULTS = {
 };
 class SettingsManager {
   constructor() {
-    const dataDir = getProjectDataDir();
+    const dataDir = app.getPath("userData");
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }
     this.filePath = join(dataDir, "settings.json");
+    this.migrateLegacySettings();
     this.settings = this.load();
+  }
+  // Migração única: versões antigas gravavam em {projeto}/data/settings.json
+  migrateLegacySettings() {
+    try {
+      if (existsSync(this.filePath)) return;
+      const legacyPath = join(getProjectDataDir(), "settings.json");
+      if (!existsSync(legacyPath)) return;
+      copyFileSync(legacyPath, this.filePath);
+      console.log("[Settings] Configurações antigas migradas para:", this.filePath);
+    } catch (err) {
+      console.warn("[Settings] Falha ao migrar configurações antigas:", err);
+    }
   }
   load() {
     try {
@@ -1139,8 +1158,35 @@ let statusPollInterval = null;
 let statusPollActive = false;
 let statusPollOnline = false;
 function getHistoryBaseDir() {
+  return join(app.getPath("userData"), "history");
+}
+function getLegacyHistoryBaseDir() {
   const projectRoot = resolve(dirname(__dirname), "..");
   return join(projectRoot, "history");
+}
+function migrateLegacyHistory() {
+  try {
+    const target = getHistoryBaseDir();
+    if (existsSync(target)) return;
+    const legacy = getLegacyHistoryBaseDir();
+    if (!existsSync(legacy)) return;
+    mkdirSync(target, { recursive: true });
+    for (const entry of readdirSync(legacy)) {
+      const src = join(legacy, entry);
+      const dest = join(target, entry);
+      if (statSync(src).isDirectory()) {
+        mkdirSync(dest, { recursive: true });
+        for (const file of readdirSync(src)) {
+          copyFileSync(join(src, file), join(dest, file));
+        }
+      } else {
+        copyFileSync(src, dest);
+      }
+    }
+    console.log("[Anima] Histórico antigo migrado para:", target);
+  } catch (err) {
+    console.warn("[Anima] Falha ao migrar histórico antigo:", err);
+  }
 }
 function buildTimestamp() {
   const now = /* @__PURE__ */ new Date();
@@ -1203,6 +1249,15 @@ async function uploadImageToComfyUI(base64, filename, comfyInputDir, baseUrl) {
       throw new Error(`Falha ao enviar arquivo para ComfyUI: ${uploadRes.status}`);
     }
     console.log("[Anima] Upload realizado com sucesso");
+  }
+}
+function removeTempFiles(files, dir) {
+  for (const file of files) {
+    if (!file) continue;
+    try {
+      rmSync(join(dir, file), { force: true });
+    } catch {
+    }
   }
 }
 function isPathSafe(targetPath, allowedBase) {
@@ -1300,8 +1355,11 @@ function sanitizeGenerationParams(raw) {
   };
   const str = (v, fallback = "") => typeof v === "string" ? v : fallback;
   const strOrNull = (v) => typeof v === "string" && v ? v : null;
+  const validModels = new Set(Object.keys(MODEL_PROFILES));
+  const requestedModel = str(p.diffusionModel, "anima");
+  const diffusionModel = validModels.has(requestedModel) ? requestedModel : "anima";
   return {
-    diffusionModel: str(p.diffusionModel, "anima"),
+    diffusionModel,
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
@@ -1461,23 +1519,27 @@ function setupIPC() {
       maskFilename,
       poseImageFilename
     };
-    const prompt = workflowManager.buildPrompt(improveParams);
-    console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
-    const response = await comfyClient.sendPrompt(prompt);
-    console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
-    if (Object.keys(response.node_errors ?? {}).length > 0) {
-      console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
-      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
-    }
-    const images = await comfyClient.waitForResult(
-      response.prompt_id,
-      (current, max) => {
-        mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+    try {
+      const prompt = workflowManager.buildPrompt(improveParams);
+      console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
+      const response = await comfyClient.sendPrompt(prompt);
+      console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
       }
-    );
-    console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
-    const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
-    return { promptId: response.prompt_id, images: savedImages };
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+        }
+      );
+      console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
+      const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
+      return { promptId: response.prompt_id, images: savedImages };
+    } finally {
+      removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir);
+    }
   });
   ipcMain.handle("comfyui:captionImage", async (event, params) => {
     requireMainWindow(event);
@@ -1492,23 +1554,30 @@ function setupIPC() {
     const imgExt = imageMatch ? imageMatch[1] : "png";
     const inputFilename = `anima-caption-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl);
-    const result = await comfyClient.captionImage(inputFilename);
-    console.log("[Anima] Caption gerado:", result.text ? result.text.slice(0, 100) + "..." : "vazio");
-    return result;
+    try {
+      const result = await comfyClient.captionImage(inputFilename);
+      console.log("[Anima] Caption gerado:", result.text ? result.text.slice(0, 100) + "..." : "vazio");
+      return result;
+    } finally {
+      removeTempFiles([inputFilename], comfyInputDir);
+    }
   });
-  ipcMain.handle("loras:list", async (_event, subfolder) => {
+  ipcMain.handle("loras:list", async (event, subfolder) => {
+    requireMainWindow(event);
     const loras = loraScanner.scan(subfolder);
     console.log(`[Anima] LoRAs encontrados: ${loras.length} para a subpasta: ${subfolder ?? "todas"}`);
     if (loras.length > 0) console.log(`[Anima] Primeiro LoRA: ${loras[0].name}, preview: ${loras[0].previewUrl ?? "nenhum"}`);
     return loras;
   });
-  ipcMain.handle("models:list", async () => {
+  ipcMain.handle("models:list", async (event) => {
+    requireMainWindow(event);
     const models = modelScanner.scan();
     console.log(`[Anima] Modelos encontrados: ${models.length}`);
     if (models.length > 0) console.log(`[Anima] Primeiro modelo: ${models[0].name}, type: ${models[0].type}`);
     return models;
   });
-  ipcMain.handle("comfyui:setUrl", async (_event, url) => {
+  ipcMain.handle("comfyui:setUrl", async (event, url) => {
+    requireMainWindow(event);
     comfyClient.setUrl(url);
   });
   ipcMain.handle("comfyui:launch", async (event) => {
@@ -1524,7 +1593,8 @@ function setupIPC() {
     }
     return result;
   });
-  ipcMain.handle("settings:get", async () => {
+  ipcMain.handle("settings:get", async (event) => {
+    requireMainWindow(event);
     return settingsManager.get();
   });
   ipcMain.handle("settings:set", async (event, newSettings) => {
@@ -1605,7 +1675,8 @@ function setupIPC() {
       throw err;
     }
   });
-  ipcMain.handle("pose:extractFromBase64", async (_event, imageBase64) => {
+  ipcMain.handle("pose:extractFromBase64", async (event, imageBase64) => {
+    requireMainWindow(event);
     try {
       if (!imageBase64 || typeof imageBase64 !== "string") {
         throw new Error("Imagem inválida");
@@ -1641,6 +1712,9 @@ function setupIPC() {
   ipcMain.handle("app:getModelProfiles", async () => {
     return MODEL_PROFILES;
   });
+  ipcMain.handle("app:getVersion", async () => {
+    return app.getVersion();
+  });
   ipcMain.handle("file:readImage", async (event, filePath) => {
     requireMainWindow(event);
     try {
@@ -1675,7 +1749,8 @@ function setupIPC() {
       return null;
     }
   });
-  ipcMain.handle("file:loadHistory", async () => {
+  ipcMain.handle("file:loadHistory", async (event) => {
+    requireMainWindow(event);
     const historyBaseDir = getHistoryBaseDir();
     if (!existsSync(historyBaseDir)) return [];
     const dirs = readdirSync(historyBaseDir);
@@ -1730,6 +1805,7 @@ function setupIPC() {
   });
 }
 app.whenReady().then(async () => {
+  migrateLegacyHistory();
   setupIPC();
   createWindow();
   const status = await comfyClient.getStatus();

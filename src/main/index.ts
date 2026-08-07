@@ -1,13 +1,13 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join, resolve, normalize, sep, dirname } from 'path'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync, copyFileSync } from 'fs'
 import { ComfyUIClient } from './comfyui'
 import { ComfyLauncher } from './comfyLauncher'
 import { WorkflowManager } from './workflow'
 import { LoraScanner } from './loraScanner'
 import { ModelScanner } from './modelScanner'
 import { SettingsManager } from './settings'
-import type { GenerationParams } from '@shared/types'
+import type { GenerationParams, DiffusionModelId } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 let mainWindow: BrowserWindow | null = null
@@ -22,8 +22,39 @@ let statusPollActive = false
 let statusPollOnline = false
 
 function getHistoryBaseDir(): string {
+  return join(app.getPath('userData'), 'history')
+}
+
+function getLegacyHistoryBaseDir(): string {
   const projectRoot = resolve(dirname(__dirname), '..')
   return join(projectRoot, 'history')
+}
+
+// Migração única: versões antigas gravavam o histórico em {projeto}/history
+function migrateLegacyHistory(): void {
+  try {
+    const target = getHistoryBaseDir()
+    if (existsSync(target)) return
+    const legacy = getLegacyHistoryBaseDir()
+    if (!existsSync(legacy)) return
+
+    mkdirSync(target, { recursive: true })
+    for (const entry of readdirSync(legacy)) {
+      const src = join(legacy, entry)
+      const dest = join(target, entry)
+      if (statSync(src).isDirectory()) {
+        mkdirSync(dest, { recursive: true })
+        for (const file of readdirSync(src)) {
+          copyFileSync(join(src, file), join(dest, file))
+        }
+      } else {
+        copyFileSync(src, dest)
+      }
+    }
+    console.log('[Anima] Histórico antigo migrado para:', target)
+  } catch (err) {
+    console.warn('[Anima] Falha ao migrar histórico antigo:', err)
+  }
 }
 
 function buildTimestamp(): string {
@@ -107,6 +138,15 @@ async function uploadImageToComfyUI(
       throw new Error(`Falha ao enviar arquivo para ComfyUI: ${uploadRes.status}`)
     }
     console.log('[Anima] Upload realizado com sucesso')
+  }
+}
+
+function removeTempFiles(files: (string | undefined)[], dir: string): void {
+  for (const file of files) {
+    if (!file) continue
+    try {
+      rmSync(join(dir, file), { force: true })
+    } catch { /* cleanup best-effort */ }
   }
 }
 
@@ -219,9 +259,16 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
   const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
   const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
 
+  // Valida o modelo de difusão contra os IDs conhecidos (evita "Workflow not loaded")
+  const validModels = new Set(Object.keys(MODEL_PROFILES))
+  const requestedModel = str(p.diffusionModel, 'anima')
+  const diffusionModel: DiffusionModelId = validModels.has(requestedModel)
+    ? (requestedModel as DiffusionModelId)
+    : 'anima'
+
   // Whitelist: apenas campos conhecidos são repassados (sem spread do objeto bruto)
   return {
-    diffusionModel: str(p.diffusionModel, 'anima'),
+    diffusionModel,
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
@@ -409,24 +456,30 @@ function setupIPC(): void {
       maskFilename,
       poseImageFilename
     }
-    const prompt = workflowManager.buildPrompt(improveParams)
-    console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
-    const response = await comfyClient.sendPrompt(prompt)
-    console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
-    if (Object.keys(response.node_errors ?? {}).length > 0) {
-      console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
-      throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
-    }
-    const images = await comfyClient.waitForResult(
-      response.prompt_id,
-      (current, max) => {
-        mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
-      }
-    )
-    console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
 
-    const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
-    return { promptId: response.prompt_id, images: savedImages }
+    try {
+      const prompt = workflowManager.buildPrompt(improveParams)
+      console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
+      const response = await comfyClient.sendPrompt(prompt)
+      console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+      }
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+        }
+      )
+      console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
+
+      const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
+      return { promptId: response.prompt_id, images: savedImages }
+    } finally {
+      // Remove arquivos temporários enviados ao ComfyUI para não acumular em input/
+      removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir)
+    }
   })
 
   ipcMain.handle('comfyui:captionImage', async (event, params: { imageBase64: string }) => {
@@ -446,27 +499,33 @@ function setupIPC(): void {
     const inputFilename = `anima-caption-${Date.now()}.${imgExt === 'jpeg' ? 'jpg' : imgExt}`
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl)
 
-    const result = await comfyClient.captionImage(inputFilename)
-    console.log('[Anima] Caption gerado:', result.text ? result.text.slice(0, 100) + '...' : 'vazio')
-
-    return result
+    try {
+      const result = await comfyClient.captionImage(inputFilename)
+      console.log('[Anima] Caption gerado:', result.text ? result.text.slice(0, 100) + '...' : 'vazio')
+      return result
+    } finally {
+      removeTempFiles([inputFilename], comfyInputDir)
+    }
   })
 
-  ipcMain.handle('loras:list', async (_event, subfolder?: string) => {
+  ipcMain.handle('loras:list', async (event, subfolder?: string) => {
+    requireMainWindow(event)
     const loras = loraScanner.scan(subfolder)
     console.log(`[Anima] LoRAs encontrados: ${loras.length} para a subpasta: ${subfolder ?? 'todas'}`)
     if (loras.length > 0) console.log(`[Anima] Primeiro LoRA: ${loras[0].name}, preview: ${loras[0].previewUrl ?? 'nenhum'}`)
     return loras
   })
 
-  ipcMain.handle('models:list', async () => {
+  ipcMain.handle('models:list', async (event) => {
+    requireMainWindow(event)
     const models = modelScanner.scan()
     console.log(`[Anima] Modelos encontrados: ${models.length}`)
     if (models.length > 0) console.log(`[Anima] Primeiro modelo: ${models[0].name}, type: ${models[0].type}`)
     return models
   })
 
-  ipcMain.handle('comfyui:setUrl', async (_event, url: string) => {
+  ipcMain.handle('comfyui:setUrl', async (event, url: string) => {
+    requireMainWindow(event)
     comfyClient.setUrl(url)
   })
 
@@ -485,7 +544,8 @@ function setupIPC(): void {
     return result
   })
 
-  ipcMain.handle('settings:get', async () => {
+  ipcMain.handle('settings:get', async (event) => {
+    requireMainWindow(event)
     return settingsManager.get()
   })
 
@@ -576,7 +636,8 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle('pose:extractFromBase64', async (_event, imageBase64: string) => {
+  ipcMain.handle('pose:extractFromBase64', async (event, imageBase64: string) => {
+    requireMainWindow(event)
     try {
       if (!imageBase64 || typeof imageBase64 !== 'string') {
         throw new Error('Imagem inválida')
@@ -619,6 +680,10 @@ function setupIPC(): void {
     return MODEL_PROFILES
   })
 
+  ipcMain.handle('app:getVersion', async () => {
+    return app.getVersion()
+  })
+
   ipcMain.handle('file:readImage', async (event, filePath: string) => {
     requireMainWindow(event)
     try {
@@ -659,7 +724,8 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle('file:loadHistory', async () => {
+  ipcMain.handle('file:loadHistory', async (event) => {
+    requireMainWindow(event)
     const historyBaseDir = getHistoryBaseDir()
     if (!existsSync(historyBaseDir)) return []
 
@@ -725,6 +791,7 @@ function setupIPC(): void {
 }
 
 app.whenReady().then(async () => {
+  migrateLegacyHistory()
   setupIPC()
   createWindow()
 

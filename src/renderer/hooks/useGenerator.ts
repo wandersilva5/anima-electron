@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import type { GenerationResult } from '@shared/types'
+import type { GenerationParams, GenerationResult } from '@shared/types'
 
 export function useGenerator() {
   const { params, setGenerating, setProgress, addToHistory, generateTrigger } = useSessionStore()
@@ -32,12 +32,21 @@ export function useGenerator() {
     setGenerating(true)
     setProgress(null)
 
-    const {
-      setPrompt: _sp, setNegativePrompt: _snp, setSeed: _ss, setSteps: _sst,
-      setCfg: _sc, setWidth: _sw, setHeight: _sh, setLora: _sl, setModel: _sm,
-      setDiffusionModel: _sdm, randomizeSeed: _rs, setFilenamePrefix: _sfp,
-      ...dataParams
-    } = params
+    const dataParams: GenerationParams = {
+      diffusionModel: params.diffusionModel,
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt,
+      seed: params.seed,
+      steps: params.steps,
+      cfg: params.cfg,
+      width: params.width,
+      height: params.height,
+      loraName: params.loraName,
+      loraStrengthModel: params.loraStrengthModel,
+      loraStrengthClip: params.loraStrengthClip,
+      modelName: params.modelName,
+      filenamePrefix: params.filenamePrefix
+    }
 
     const unsubProgress = window.electronAPI.comfyui.onProgress((data) => {
       setProgress(data)
