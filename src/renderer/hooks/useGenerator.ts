@@ -67,7 +67,9 @@ export function useGenerator() {
         addToHistory(entry)
         useSessionStore.getState().selectImage(entry.id)
       }
-      useSessionStore.getState().params.randomizeSeed()
+      if (!useSessionStore.getState().seedLocked) {
+        useSessionStore.getState().params.randomizeSeed()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao gerar imagem')
     } finally {

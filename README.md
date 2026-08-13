@@ -91,6 +91,7 @@ As configurações ficam salvas em `%APPDATA%/anima-electron/settings.json`.
 - Lista modelos e LoRAs disponíveis com preview visual
 - Busca/filtro de LoRAs com botão limpar
 - Parâmetros de geração: seed, steps, CFG, resolução, força do LoRA
+- Fixar seed: botão de cadeado que mantém o mesmo seed entre gerações (desativado por padrão)
 - Histórico persistente com imagens salvas em disco
 - Metadados completos salvos junto com cada imagem
 - Exclusão de itens do histórico individual ou múltipla

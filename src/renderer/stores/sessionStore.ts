@@ -44,6 +44,8 @@ interface SessionState {
   toggleTheme: () => void
   generateTrigger: number
   requestGenerate: () => void
+  seedLocked: boolean
+  setSeedLocked: (locked: boolean) => void
   params: GenerationParamsState
 }
 
@@ -118,6 +120,11 @@ export const useSessionStore = create<SessionState>((set) => ({
     }),
   generateTrigger: 0,
   requestGenerate: () => set((s) => ({ generateTrigger: s.generateTrigger + 1 })),
+  seedLocked: (localStorage.getItem('anima-seed-locked') === 'true'),
+  setSeedLocked: (seedLocked) => {
+    localStorage.setItem('anima-seed-locked', String(seedLocked))
+    set({ seedLocked })
+  },
   params: {
     ...defaultParams,
     setPrompt: (prompt) => {

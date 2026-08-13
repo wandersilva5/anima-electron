@@ -1,6 +1,6 @@
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
-import { Sparkles, Shuffle } from 'lucide-react'
+import { Sparkles, Shuffle, Lock, LockOpen } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { ModelSidebar } from './ModelSidebar'
 
@@ -13,7 +13,7 @@ const ASPECT_RATIOS = [
 ] as const
 
 export function PromptPanel() {
-  const { params, generating, progress, status, loras, models, refreshLoras } = useSessionStore()
+  const { params, generating, progress, status, loras, models, refreshLoras, seedLocked, setSeedLocked } = useSessionStore()
   const activePreset = ASPECT_RATIOS.find(
     (ar) => ar.width === params.width && ar.height === params.height
   )
@@ -82,6 +82,17 @@ export function PromptPanel() {
                   onChange={(e) => params.setSeed(Number(e.target.value))}
                   className="w-full bg-surface rounded-lg border border-border px-2 py-1.5 text-xs text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
                 />
+                <button
+                  onClick={() => setSeedLocked(!seedLocked)}
+                  className={`p-1.5 rounded-lg transition-colors shrink-0 ${
+                    seedLocked
+                      ? 'bg-accent text-white'
+                      : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'
+                  }`}
+                  title={seedLocked ? 'Seed fixado (mantém o mesmo ao gerar)' : 'Fixar seed'}
+                >
+                  {seedLocked ? <Lock size={14} /> : <LockOpen size={14} />}
+                </button>
                 <button
                   onClick={params.randomizeSeed}
                   className="p-1.5 rounded-lg bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary transition-colors shrink-0"
