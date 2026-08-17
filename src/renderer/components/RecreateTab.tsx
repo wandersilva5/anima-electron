@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock } from 'lucide-react'
+import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock, Eye, EyeOff } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
@@ -53,6 +53,7 @@ export function RecreateTab() {
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [showingResult, setShowingResult] = useState(true)
+  const [blurred, setBlurred] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -63,7 +64,7 @@ export function RecreateTab() {
     const folder = MODEL_PROFILES[selectedModel].loraFolder
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
-    }).catch(() => {})
+    }).catch(() => { })
   }, [selectedModel])
 
   const handleFile = useCallback((file: File) => {
@@ -74,6 +75,7 @@ export function RecreateTab() {
       setResultSrc(null)
       setCaption('')
       setError(null)
+      setBlurred(false)
     }
     reader.readAsDataURL(file)
   }, [])
@@ -113,6 +115,7 @@ export function RecreateTab() {
     setResultSrc(null)
     setCaption('')
     setError(null)
+    setBlurred(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -253,7 +256,7 @@ export function RecreateTab() {
               <img
                 src={resultSrc && showingResult ? resultSrc : originalSrc}
                 alt="Preview"
-                className="w-full h-auto max-h-[60vh] object-contain"
+                className={`w-full h-auto max-h-[60vh] object-contain transition-all duration-300 ${blurred ? 'blur-md' : ''}`}
                 draggable={false}
               />
 
@@ -280,6 +283,14 @@ export function RecreateTab() {
               >
                 <Trash2 size={14} />
                 Remover
+              </button>
+              <button
+                onClick={() => setBlurred(!blurred)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${blurred ? 'bg-accent/20 text-accent border border-accent/30' : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'}`}
+                title={blurred ? 'Mostrar imagem nítida' : 'Desfocar imagem'}
+              >
+                {blurred ? <Eye size={14} /> : <EyeOff size={14} />}
+                {blurred ? 'Nitidar' : 'Desfocar'}
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}

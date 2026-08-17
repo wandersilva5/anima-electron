@@ -145,6 +145,30 @@ class ComfyUIClient {
       ws?.close();
     }
   }
+  async clearCache() {
+    try {
+      await fetch(`${this.baseUrl}/queue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear: true })
+      }).catch(() => {
+      });
+      const res = await fetch(`${this.baseUrl}/free`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unload_models: true, free_memory: true })
+      });
+      if (!res.ok) {
+        throw new Error(`ComfyUI /free retornou ${res.status}`);
+      }
+      console.log("[ComfyUIClient] Cache/buffer do ComfyUI limpo (fila + modelos descarregados)");
+      return { success: true, message: "Cache do ComfyUI limpo" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      console.warn("[ComfyUIClient] Falha ao limpar cache do ComfyUI:", err);
+      return { success: false, message: msg };
+    }
+  }
   async captionImage(inputFilename) {
     let allNodesInfo = {};
     try {
@@ -1575,6 +1599,10 @@ function setupIPC() {
     console.log(`[Anima] Modelos encontrados: ${models.length}`);
     if (models.length > 0) console.log(`[Anima] Primeiro modelo: ${models[0].name}, type: ${models[0].type}`);
     return models;
+  });
+  ipcMain.handle("comfyui:clearCache", async (event) => {
+    requireMainWindow(event);
+    return comfyClient.clearCache();
   });
   ipcMain.handle("comfyui:setUrl", async (event, url) => {
     requireMainWindow(event);

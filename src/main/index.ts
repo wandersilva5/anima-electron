@@ -524,6 +524,11 @@ function setupIPC(): void {
     return models
   })
 
+  ipcMain.handle('comfyui:clearCache', async (event) => {
+    requireMainWindow(event)
+    return comfyClient.clearCache()
+  })
+
   ipcMain.handle('comfyui:setUrl', async (event, url: string) => {
     requireMainWindow(event)
     comfyClient.setUrl(url)

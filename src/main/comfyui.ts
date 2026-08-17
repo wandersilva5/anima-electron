@@ -147,6 +147,33 @@ export class ComfyUIClient {
     }
   }
 
+  async clearCache(): Promise<{ success: boolean; message: string }> {
+    try {
+      // Limpa a fila pendente (se houver geração travada)
+      await fetch(`${this.baseUrl}/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear: true })
+      }).catch(() => { /* best-effort */ })
+
+      // Descarrega modelos da VRAM e libera o cache de execução do ComfyUI
+      const res = await fetch(`${this.baseUrl}/free`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unload_models: true, free_memory: true })
+      })
+      if (!res.ok) {
+        throw new Error(`ComfyUI /free retornou ${res.status}`)
+      }
+      console.log('[ComfyUIClient] Cache/buffer do ComfyUI limpo (fila + modelos descarregados)')
+      return { success: true, message: 'Cache do ComfyUI limpo' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido'
+      console.warn('[ComfyUIClient] Falha ao limpar cache do ComfyUI:', err)
+      return { success: false, message: msg }
+    }
+  }
+
   async captionImage(
     inputFilename: string
   ): Promise<{ text: string }> {

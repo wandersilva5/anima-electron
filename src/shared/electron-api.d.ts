@@ -23,6 +23,7 @@ interface ElectronAPI {
     generate: (params: unknown) => Promise<GenerateResult>
     generateImprove: (params: unknown) => Promise<GenerateResult>
     captionImage: (params: { imageBase64: string }) => Promise<{ text: string }>
+    clearCache: () => Promise<{ success: boolean; message: string }>
     setUrl: (url: string) => Promise<void>
     launch: () => Promise<{ success: boolean; message: string }>
     onProgress: (callback: (data: { current: number; max: number }) => void) => () => void

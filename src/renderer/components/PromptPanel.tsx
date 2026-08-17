@@ -1,8 +1,9 @@
 import { useSessionStore } from '../stores/sessionStore'
 import { useGenerator } from '../hooks/useGenerator'
-import { Sparkles, Shuffle, Lock, LockOpen } from 'lucide-react'
+import { Sparkles, Shuffle, Lock, LockOpen, RotateCcw } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { ModelSidebar } from './ModelSidebar'
+import { useState } from 'react'
 
 const ASPECT_RATIOS = [
   { label: '1:1', width: 1152, height: 1152 },
@@ -18,6 +19,8 @@ export function PromptPanel() {
     (ar) => ar.width === params.width && ar.height === params.height
   )
   const { generate, error } = useGenerator()
+  const [resettingCache, setResettingCache] = useState(false)
+  const [cacheMsg, setCacheMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const profile = MODEL_PROFILES[params.diffusionModel]
 
@@ -190,6 +193,17 @@ export function PromptPanel() {
       </div>
 
       <div className="mt-auto p-4 border-t border-border">
+        {cacheMsg && (
+          <div
+            className={`mb-2 p-2 rounded-lg border text-xs ${
+              cacheMsg.ok
+                ? 'bg-success/10 border-success/30 text-success'
+                : 'bg-error/10 border-error/30 text-error'
+            }`}
+          >
+            {cacheMsg.text}
+          </div>
+        )}
         <div className="mb-2 text-xs text-text-muted text-center">
           Ctrl+Enter para gerar
         </div>
@@ -237,6 +251,44 @@ export function PromptPanel() {
             <>
               <Sparkles size={16} />
               Gerar
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={async () => {
+            if (resettingCache || !status.online) return
+            setResettingCache(true)
+            setCacheMsg(null)
+            try {
+              const result = await window.electronAPI.comfyui.clearCache()
+              setCacheMsg({ ok: result.success, text: result.message })
+            } catch (err) {
+              setCacheMsg({ ok: false, text: err instanceof Error ? err.message : 'Erro ao limpar cache' })
+            } finally {
+              setResettingCache(false)
+            }
+          }}
+          disabled={resettingCache || !status.online}
+          className={`
+            w-full flex items-center justify-center gap-2 py-2 rounded-lg font-medium text-xs mt-2
+            transition-all duration-200
+            ${resettingCache || !status.online
+              ? 'bg-surface-tertiary text-text-muted cursor-not-allowed'
+              : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'
+            }
+          `}
+          title="Limpa a fila e descarrega os modelos do ComfyUI (útil quando a geração parece presa em um mesmo resultado)"
+        >
+          {resettingCache ? (
+            <>
+              <div className="w-3.5 h-3.5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
+              Limpando...
+            </>
+          ) : (
+            <>
+              <RotateCcw size={14} />
+              Resetar cache do ComfyUI
             </>
           )}
         </button>
