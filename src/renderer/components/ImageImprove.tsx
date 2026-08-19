@@ -6,6 +6,7 @@ import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
 import { ModelSidebar } from './ModelSidebar'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
+import { resizeImageForModel } from '../utils/imageResize'
 
 export function ImageImprove() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
@@ -86,6 +87,11 @@ export function ImageImprove() {
         }
       }
 
+      const imageBase64 = await resizeImageForModel(originalSrc, selectedModel)
+      if (maskBase64) {
+        maskBase64 = await resizeImageForModel(maskBase64, selectedModel)
+      }
+
       const seed = Math.floor(Math.random() * 2147483647)
       const prof = MODEL_PROFILES[selectedModel]
 
@@ -102,7 +108,7 @@ export function ImageImprove() {
         loraName: selectedLora,
         loraStrengthModel,
         loraStrengthClip,
-        imageBase64: originalSrc,
+        imageBase64,
         denoise,
         filenamePrefix: 'anima-improve',
         maskBase64
