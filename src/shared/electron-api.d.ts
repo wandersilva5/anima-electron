@@ -3,6 +3,7 @@ import type { AppSettings, ComfyUIStatus, LoraInfo, ModelInfo } from '@shared/ty
 interface GenerateResult {
   promptId: string
   images: { filename: string; data: string; filePath: string }[]
+  warning?: string
 }
 
 interface ComfyUIStatusWithLaunch extends ComfyUIStatus {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ComfyUIStatus, GenerationResult, GenerationParams, LoraInfo, ModelInfo, DiffusionModelId } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
+import { playCompletionSound } from '../utils/sound'
 
 interface GenerationParamsState extends GenerationParams {
   setPrompt: (p: string) => void
@@ -79,7 +80,10 @@ export const useSessionStore = create<SessionState>((set) => ({
   progress: null,
   setProgress: (progress) => set({ progress }),
   history: [],
-  addToHistory: (result) => set((s) => ({ history: [result, ...s.history] })),
+  addToHistory: (result) => {
+    playCompletionSound()
+    set((s) => ({ history: [result, ...s.history] }))
+  },
   setHistory: (history) => set({ history }),
   deleteHistory: (ids) => set((s) => ({
     history: s.history.filter((h) => !ids.includes(h.id)),

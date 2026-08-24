@@ -121,12 +121,12 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
 export function PoseStudio() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
-  const selectedModel: DiffusionModelId = 'z-image'
+  const selectedModel: DiffusionModelId = 'anima'
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
   const [selectedLora, setSelectedLora] = useState<string | null>(null)
   const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
   const [loraStrengthClip, setLoraStrengthClip] = useState(0.5)
-  const [denoise, setDenoise] = useState(0.7)
+  const [denoise, setDenoise] = useState(0.9)
   const [captioning, setCaptioning] = useState(false)
   const [charPrompt, setCharPrompt] = useState('')
 
@@ -138,6 +138,7 @@ export function PoseStudio() {
 
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const [dragOverPose, setDragOverPose] = useState(false)
   const [dragOverChar, setDragOverChar] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
@@ -151,7 +152,7 @@ export function PoseStudio() {
 
   useEffect(() => {
     setSelectedLora(null)
-    const folder = MODEL_PROFILES['z-image'].loraFolder
+    const folder = MODEL_PROFILES['anima'].loraFolder
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
     }).catch(() => {})
@@ -254,6 +255,7 @@ export function PoseStudio() {
 
     setGenerating(true)
     setError(null)
+    setWarning(null)
     setResultSrc(null)
 
     const stopProgress = startProgress()
@@ -297,6 +299,7 @@ export function PoseStudio() {
 
       const image = result.images?.[0]
       if (image) {
+        if (result.warning) setWarning(result.warning)
         const src = `data:image/png;base64,${image.data}`
         setResultSrc(src)
         const entry: GenerationResult = {
@@ -405,6 +408,11 @@ export function PoseStudio() {
           {error && (
             <div className="w-full p-3 rounded-lg bg-error/10 border border-error/30 text-error text-xs">
               {error}
+            </div>
+          )}
+          {warning && (
+            <div className="w-full p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs">
+              {warning}
             </div>
           )}
         </div>

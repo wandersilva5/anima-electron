@@ -251,9 +251,13 @@ export class WorkflowManager {
     }
   }
 
-  buildPrompt(params: GenerationParams): Record<string, unknown> {
+  buildPrompt(
+    params: GenerationParams,
+    opts: { availableNodes?: Set<string>; warnings?: string[] } = {}
+  ): Record<string, unknown> {
     const modelId = params.diffusionModel || 'anima'
     const data = this.workflows[modelId]
+    const warnings = opts.warnings ?? []
     if (!data) {
       throw new Error(`Workflow not loaded for model: ${modelId}`)
     }
@@ -459,55 +463,74 @@ export class WorkflowManager {
       const modelSource = ksamplerEntry && (ksamplerEntry.inputs as Record<string, unknown>)?.model
 
       if (llliteName && ksamplerEntry && Array.isArray(modelSource)) {
-        const poseSourceId = 88800
-        const modelPatchId = 88802
-        const applyId = 88803
-        const poseImageFilename = (params as any).poseImageFilename as string | undefined
+        const requiredNodes = ['ModelPatchLoader', 'AnimaLLLiteApply']
+        const available = opts.availableNodes
+        const missing = available
+          ? requiredNodes.filter(n => !available.has(n))
+          : []
 
-        if (poseImageFilename) {
-          prompt[String(poseSourceId)] = {
-            class_type: 'LoadImage',
-            _meta: { title: 'LoadImage (pose única)' },
-            inputs: {
-              image: poseImageFilename
-            }
-          }
+        if (missing.length > 0) {
+          warnings.push(
+            `Controle de pose indisponível: nós necessários ausentes no ComfyUI (${missing.join(', ')}). ` +
+            'A imagem será gerada sem aplicar a pose.'
+          )
+          console.warn(`[WorkflowManager] Pose LLLite pipeline skipped, missing nodes: ${missing.join(', ')}`)
         } else {
-          prompt[String(poseSourceId)] = {
-            class_type: 'VNCCS_PoseGenerator',
-            _meta: { title: 'VNCCS_PoseGenerator (pose)' },
-            inputs: {
-              pose_data: (params as any).poseData,
-              line_thickness: (params as any).lineThickness ?? 3,
-              safe_zone: (params as any).safeZone ?? 100
+          const poseSourceId = 88800
+          const modelPatchId = 88802
+          const applyId = 88803
+          const poseImageFilename = (params as any).poseImageFilename as string | undefined
+
+          if (poseImageFilename) {
+            prompt[String(poseSourceId)] = {
+              class_type: 'LoadImage',
+              _meta: { title: 'LoadImage (pose única)' },
+              inputs: {
+                image: poseImageFilename
+              }
+            }
+          } else {
+            prompt[String(poseSourceId)] = {
+              class_type: 'VNCCS_PoseGenerator',
+              _meta: { title: 'VNCCS_PoseGenerator (pose)' },
+              inputs: {
+                pose_data: (params as any).poseData,
+                line_thickness: (params as any).lineThickness ?? 3,
+                safe_zone: (params as any).safeZone ?? 100
+              }
             }
           }
-        }
 
-        prompt[String(modelPatchId)] = {
-          class_type: 'ModelPatchLoader',
-          _meta: { title: 'ModelPatchLoader (pose LLLite)' },
-          inputs: {
-            name: llliteName
+          prompt[String(modelPatchId)] = {
+            class_type: 'ModelPatchLoader',
+            _meta: { title: 'ModelPatchLoader (pose LLLite)' },
+            inputs: {
+              name: llliteName
+            }
           }
-        }
 
-        prompt[String(applyId)] = {
-          class_type: 'AnimaLLLiteApply',
-          _meta: { title: 'AnimaLLLiteApply (pose)' },
-          inputs: {
-            model: modelSource,
-            model_patch: [String(modelPatchId), 0],
-            image: [String(poseSourceId), 0],
-            strength: (params as any).poseStrength ?? 1,
-            start_percent: 0,
-            end_percent: 1
+          prompt[String(applyId)] = {
+            class_type: 'AnimaLLLiteApply',
+            _meta: { title: 'AnimaLLLiteApply (pose)' },
+            inputs: {
+              model: modelSource,
+              model_patch: [String(modelPatchId), 0],
+              image: [String(poseSourceId), 0],
+              strength: (params as any).poseStrength ?? 1,
+              start_percent: 0,
+              end_percent: 1
+            }
           }
-        }
 
-        const kInputs = ksamplerEntry.inputs as Record<string, unknown>
-        kInputs.model = [String(applyId), 0]
-        console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? 'LoadImage' : 'VNCCS_PoseGenerator'} -> ModelPatchLoader -> AnimaLLLiteApply)`)
+          const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+          kInputs.model = [String(applyId), 0]
+          console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? 'LoadImage' : 'VNCCS_PoseGenerator'} -> ModelPatchLoader -> AnimaLLLiteApply)`)
+        }
+      } else if (!llliteName) {
+        warnings.push(
+          'Controle de pose indisponível: pesos Anima LLLite não encontrados (anima\\anima-lllite-pose-1.safetensors). ' +
+          'A imagem será gerada sem aplicar a pose.'
+        )
       }
     }
 

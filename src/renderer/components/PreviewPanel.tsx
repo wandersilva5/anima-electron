@@ -43,10 +43,10 @@ export function PreviewPanel() {
     { label: 'Resolução', value: `${item.params.width}×${item.params.height}` },
     ...(item.params.loraName
       ? [
-          { label: 'LoRA', value: item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? item.params.loraName },
-          { label: 'LoRA Model', value: item.params.loraStrengthModel.toFixed(2) },
-          { label: 'LoRA CLIP', value: item.params.loraStrengthClip.toFixed(2) }
-        ]
+        { label: 'LoRA', value: item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? item.params.loraName },
+        { label: 'LoRA Model', value: item.params.loraStrengthModel.toFixed(2) },
+        { label: 'LoRA CLIP', value: item.params.loraStrengthClip.toFixed(2) }
+      ]
       : [])
   ]
 
@@ -57,7 +57,7 @@ export function PreviewPanel() {
           <img
             src={imgSrc ?? ''}
             alt="Generated"
-            className={`absolute inset-0 w-full h-full object-contain transition-all duration-300 ${blurred ? 'blur-[40px] scale-105' : ''}`}
+            className={`absolute inset-0 w-full h-full object-contain transition-all duration-300 ${blurred ? 'blur-3xl scale-105' : ''}`}
           />
           {blurred && (
             <div className="absolute inset-0 flex items-center justify-center z-10">

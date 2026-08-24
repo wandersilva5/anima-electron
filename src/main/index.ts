@@ -391,7 +391,8 @@ function setupIPC(): void {
     console.log('[Anima] Modelo:', params.modelName, '| LoRA:', params.loraName ?? 'nenhum')
     console.log('[Anima] Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
     console.log('[Anima] Seed:', params.seed, 'Steps:', params.steps, 'CFG:', params.cfg)
-    const prompt = workflowManager.buildPrompt(params)
+    const availableNodes = await comfyClient.getAvailableNodes()
+    const prompt = workflowManager.buildPrompt(params, { availableNodes })
     console.log('[Anima] Prompt construído, nós:', Object.keys(prompt).length)
     const response = await comfyClient.sendPrompt(prompt)
     console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
@@ -458,7 +459,9 @@ function setupIPC(): void {
     }
 
     try {
-      const prompt = workflowManager.buildPrompt(improveParams)
+      const availableNodes = await comfyClient.getAvailableNodes()
+      const warnings: string[] = []
+      const prompt = workflowManager.buildPrompt(improveParams, { availableNodes, warnings })
       console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
       const response = await comfyClient.sendPrompt(prompt)
       console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
@@ -475,7 +478,7 @@ function setupIPC(): void {
       console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
 
       const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
-      return { promptId: response.prompt_id, images: savedImages }
+      return { promptId: response.prompt_id, images: savedImages, warning: warnings.join(' ') || undefined }
     } finally {
       // Remove arquivos temporários enviados ao ComfyUI para não acumular em input/
       removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir)

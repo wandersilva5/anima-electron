@@ -27,6 +27,7 @@ function extractAnyString(obj, depth = 0) {
 }
 class ComfyUIClient {
   constructor(baseUrl) {
+    this.objectInfoCache = { nodes: null, at: 0 };
     this.baseUrl = baseUrl;
   }
   getBaseUrl() {
@@ -34,6 +35,25 @@ class ComfyUIClient {
   }
   setUrl(url) {
     this.baseUrl = url;
+  }
+  async getAvailableNodes() {
+    const now = Date.now();
+    if (this.objectInfoCache.nodes && now - this.objectInfoCache.at < 3e4) {
+      return this.objectInfoCache.nodes;
+    }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8e3);
+      const res = await fetch(`${this.baseUrl}/object_info`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok) return /* @__PURE__ */ new Set();
+      const data = await res.json();
+      const nodes = new Set(Object.keys(data));
+      this.objectInfoCache = { nodes, at: now };
+      return nodes;
+    } catch {
+      return /* @__PURE__ */ new Set();
+    }
   }
   async getStatus() {
     const endpoints = ["/system_stats", "/queue", "/"];
@@ -703,9 +723,10 @@ class WorkflowManager {
       modelName: ""
     };
   }
-  buildPrompt(params) {
+  buildPrompt(params, opts = {}) {
     const modelId = params.diffusionModel || "anima";
     const data = this.workflows[modelId];
+    const warnings = opts.warnings ?? [];
     if (!data) {
       throw new Error(`Workflow not loaded for model: ${modelId}`);
     }
@@ -882,51 +903,65 @@ class WorkflowManager {
       const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
       const modelSource = ksamplerEntry && ksamplerEntry.inputs?.model;
       if (llliteName && ksamplerEntry && Array.isArray(modelSource)) {
-        const poseSourceId = 88800;
-        const modelPatchId = 88802;
-        const applyId = 88803;
-        const poseImageFilename = params.poseImageFilename;
-        if (poseImageFilename) {
-          prompt[String(poseSourceId)] = {
-            class_type: "LoadImage",
-            _meta: { title: "LoadImage (pose única)" },
-            inputs: {
-              image: poseImageFilename
-            }
-          };
+        const requiredNodes = ["ModelPatchLoader", "AnimaLLLiteApply"];
+        const available = opts.availableNodes;
+        const missing = available ? requiredNodes.filter((n) => !available.has(n)) : [];
+        if (missing.length > 0) {
+          warnings.push(
+            `Controle de pose indisponível: nós necessários ausentes no ComfyUI (${missing.join(", ")}). A imagem será gerada sem aplicar a pose.`
+          );
+          console.warn(`[WorkflowManager] Pose LLLite pipeline skipped, missing nodes: ${missing.join(", ")}`);
         } else {
-          prompt[String(poseSourceId)] = {
-            class_type: "VNCCS_PoseGenerator",
-            _meta: { title: "VNCCS_PoseGenerator (pose)" },
+          const poseSourceId = 88800;
+          const modelPatchId = 88802;
+          const applyId = 88803;
+          const poseImageFilename = params.poseImageFilename;
+          if (poseImageFilename) {
+            prompt[String(poseSourceId)] = {
+              class_type: "LoadImage",
+              _meta: { title: "LoadImage (pose única)" },
+              inputs: {
+                image: poseImageFilename
+              }
+            };
+          } else {
+            prompt[String(poseSourceId)] = {
+              class_type: "VNCCS_PoseGenerator",
+              _meta: { title: "VNCCS_PoseGenerator (pose)" },
+              inputs: {
+                pose_data: params.poseData,
+                line_thickness: params.lineThickness ?? 3,
+                safe_zone: params.safeZone ?? 100
+              }
+            };
+          }
+          prompt[String(modelPatchId)] = {
+            class_type: "ModelPatchLoader",
+            _meta: { title: "ModelPatchLoader (pose LLLite)" },
             inputs: {
-              pose_data: params.poseData,
-              line_thickness: params.lineThickness ?? 3,
-              safe_zone: params.safeZone ?? 100
+              name: llliteName
             }
           };
+          prompt[String(applyId)] = {
+            class_type: "AnimaLLLiteApply",
+            _meta: { title: "AnimaLLLiteApply (pose)" },
+            inputs: {
+              model: modelSource,
+              model_patch: [String(modelPatchId), 0],
+              image: [String(poseSourceId), 0],
+              strength: params.poseStrength ?? 1,
+              start_percent: 0,
+              end_percent: 1
+            }
+          };
+          const kInputs = ksamplerEntry.inputs;
+          kInputs.model = [String(applyId), 0];
+          console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? "LoadImage" : "VNCCS_PoseGenerator"} -> ModelPatchLoader -> AnimaLLLiteApply)`);
         }
-        prompt[String(modelPatchId)] = {
-          class_type: "ModelPatchLoader",
-          _meta: { title: "ModelPatchLoader (pose LLLite)" },
-          inputs: {
-            name: llliteName
-          }
-        };
-        prompt[String(applyId)] = {
-          class_type: "AnimaLLLiteApply",
-          _meta: { title: "AnimaLLLiteApply (pose)" },
-          inputs: {
-            model: modelSource,
-            model_patch: [String(modelPatchId), 0],
-            image: [String(poseSourceId), 0],
-            strength: params.poseStrength ?? 1,
-            start_percent: 0,
-            end_percent: 1
-          }
-        };
-        const kInputs = ksamplerEntry.inputs;
-        kInputs.model = [String(applyId), 0];
-        console.log(`[Anima] Pose pipeline injected (${poseImageFilename ? "LoadImage" : "VNCCS_PoseGenerator"} -> ModelPatchLoader -> AnimaLLLiteApply)`);
+      } else if (!llliteName) {
+        warnings.push(
+          "Controle de pose indisponível: pesos Anima LLLite não encontrados (anima\\anima-lllite-pose-1.safetensors). A imagem será gerada sem aplicar a pose."
+        );
       }
     }
     if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
@@ -1489,7 +1524,8 @@ function setupIPC() {
     console.log("[Anima] Modelo:", params.modelName, "| LoRA:", params.loraName ?? "nenhum");
     console.log("[Anima] Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
     console.log("[Anima] Seed:", params.seed, "Steps:", params.steps, "CFG:", params.cfg);
-    const prompt = workflowManager.buildPrompt(params);
+    const availableNodes = await comfyClient.getAvailableNodes();
+    const prompt = workflowManager.buildPrompt(params, { availableNodes });
     console.log("[Anima] Prompt construído, nós:", Object.keys(prompt).length);
     const response = await comfyClient.sendPrompt(prompt);
     console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
@@ -1544,7 +1580,9 @@ function setupIPC() {
       poseImageFilename
     };
     try {
-      const prompt = workflowManager.buildPrompt(improveParams);
+      const availableNodes = await comfyClient.getAvailableNodes();
+      const warnings = [];
+      const prompt = workflowManager.buildPrompt(improveParams, { availableNodes, warnings });
       console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
       const response = await comfyClient.sendPrompt(prompt);
       console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
@@ -1560,7 +1598,7 @@ function setupIPC() {
       );
       console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
       const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
-      return { promptId: response.prompt_id, images: savedImages };
+      return { promptId: response.prompt_id, images: savedImages, warning: warnings.join(" ") || void 0 };
     } finally {
       removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir);
     }

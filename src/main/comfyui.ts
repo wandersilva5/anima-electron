@@ -35,6 +35,28 @@ export class ComfyUIClient {
     this.baseUrl = url
   }
 
+  private objectInfoCache: { nodes: Set<string> | null; at: number } = { nodes: null, at: 0 }
+
+  async getAvailableNodes(): Promise<Set<string>> {
+    const now = Date.now()
+    if (this.objectInfoCache.nodes && now - this.objectInfoCache.at < 30000) {
+      return this.objectInfoCache.nodes
+    }
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 8000)
+      const res = await fetch(`${this.baseUrl}/object_info`, { signal: controller.signal })
+      clearTimeout(timeout)
+      if (!res.ok) return new Set()
+      const data = await res.json() as Record<string, unknown>
+      const nodes = new Set(Object.keys(data))
+      this.objectInfoCache = { nodes, at: now }
+      return nodes
+    } catch {
+      return new Set()
+    }
+  }
+
   async getStatus(): Promise<ComfyUIStatus> {
     const endpoints = ['/system_stats', '/queue', '/']
     for (const ep of endpoints) {
