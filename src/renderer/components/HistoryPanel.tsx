@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import type { GenerationResult } from '@shared/types'
 import { Image, Clock, Trash2, X, CheckSquare, Square } from 'lucide-react'
@@ -21,21 +21,32 @@ function HistoryItem({
   onDelete: () => void
 }) {
   const [imgSrc, setImgSrc] = useState<string | null>(item.imageBase64)
-  const [loaded, setLoaded] = useState(false)
+  const containerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    if (item.imageBase64) {
-      setImgSrc(item.imageBase64)
-      setLoaded(true)
-    } else if (item.filePath && !loaded) {
-      window.electronAPI.file.readImage(item.filePath).then((data) => {
-        if (data) {
-          setImgSrc(data)
-          setLoaded(true)
-        }
-      })
+    // Imagens recém-geradas já vêm em base64; as do histórico são carregadas
+    // como miniatura apenas quando entram na viewport (evita OOM do renderer)
+    if (item.imageBase64 || !item.filePath) return
+    const el = containerRef.current
+    if (!el) return
+
+    let cancelled = false
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return
+        io.disconnect()
+        window.electronAPI.file.readThumbnail(item.filePath!).then((data) => {
+          if (!cancelled && data) setImgSrc(data)
+        })
+      },
+      { rootMargin: '300px' }
+    )
+    io.observe(el)
+    return () => {
+      cancelled = true
+      io.disconnect()
     }
-  }, [item.imageBase64, item.filePath, loaded])
+  }, [item.imageBase64, item.filePath])
 
   const handleClick = useCallback(() => {
     if (deleteMode) {
@@ -47,6 +58,7 @@ function HistoryItem({
 
   return (
     <button
+      ref={containerRef}
       onClick={handleClick}
       className={`
         relative aspect-[9/16] rounded-lg overflow-hidden
@@ -109,7 +121,7 @@ function HistoryItem({
   )
 }
 
-export function HistoryPanel() {
+export function HistoryPanel({ onPick }: { onPick?: (item: GenerationResult) => void }) {
   const { history, selectedId, selectImage, deleteHistory } = useSessionStore()
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleteIds, setDeleteIds] = useState<Set<string>>(new Set())
@@ -211,7 +223,10 @@ export function HistoryPanel() {
             deleteMode={deleteMode}
             deleteSelected={deleteIds.has(item.id)}
             onToggleSelect={() => toggleDelete(item.id)}
-            onSelect={() => selectImage(item.id === selectedId ? null : item.id)}
+            onSelect={() => {
+              if (onPick) onPick(item)
+              else selectImage(item.id === selectedId ? null : item.id)
+            }}
             onDelete={() => handleIndividualDelete(item.id, item.filePath)}
           />
         ))}

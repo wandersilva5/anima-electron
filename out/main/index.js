@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, nativeImage, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join, dirname, normalize, resolve, sep } from "path";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, rmSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync, statSync } from "fs";
 import { WebSocket } from "ws";
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
@@ -1207,6 +1208,46 @@ class SettingsManager {
     return this.settings.lorasPath || join(this.settings.comfyUIPath, "ComfyUI", "models", "loras");
   }
 }
+const THUMB_WIDTH = 256;
+const JPEG_QUALITY = 72;
+function thumbnailPath(filePath, cacheDir) {
+  try {
+    const stat = statSync(filePath);
+    const key = createHash("sha1").update(`${filePath}|${stat.size}|${stat.mtimeMs}`).digest("hex");
+    return join(cacheDir, `${key}.jpg`);
+  } catch {
+    return null;
+  }
+}
+function deleteThumbnail(filePath, cacheDir) {
+  const thumb = thumbnailPath(filePath, cacheDir);
+  if (!thumb) return;
+  try {
+    rmSync(thumb, { force: true });
+  } catch {
+  }
+}
+function getThumbnailDataUrl(filePath, cacheDir) {
+  try {
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
+    }
+    const cached = thumbnailPath(filePath, cacheDir);
+    if (cached && existsSync(cached)) {
+      return `data:image/jpeg;base64,${readFileSync(cached).toString("base64")}`;
+    }
+    const img = nativeImage.createFromPath(filePath);
+    if (img.isEmpty()) return null;
+    const { width } = img.getSize();
+    const resized = width > THUMB_WIDTH ? img.resize({ width: THUMB_WIDTH }) : img;
+    const jpeg = resized.toJPEG(JPEG_QUALITY);
+    if (jpeg.length === 0) return null;
+    if (cached) writeFileSync(cached, jpeg);
+    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
 let mainWindow = null;
 let comfyClient;
 let comfyLauncher;
@@ -1815,6 +1856,25 @@ function setupIPC() {
       return null;
     }
   });
+  ipcMain.handle("file:readThumbnail", async (event, filePath) => {
+    requireMainWindow(event);
+    try {
+      const historyBaseDir = getHistoryBaseDir();
+      const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath];
+      if (!allowedBases.some((base) => isPathSafe(filePath, base))) {
+        console.warn("[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:", filePath);
+        return null;
+      }
+      const extMatch = /\.([a-z0-9]+)$/i.exec(filePath);
+      const ext = extMatch ? extMatch[1].toLowerCase() : "";
+      if (!["png", "jpg", "jpeg", "webp", "bmp"].includes(ext)) return null;
+      const size = statSync(filePath).size;
+      if (size > 50 * 1024 * 1024) return null;
+      return getThumbnailDataUrl(filePath, join(historyBaseDir, ".thumbs"));
+    } catch {
+      return null;
+    }
+  });
   ipcMain.handle("file:loadHistory", async (event) => {
     requireMainWindow(event);
     const historyBaseDir = getHistoryBaseDir();
@@ -1856,6 +1916,7 @@ function setupIPC() {
           console.warn("[Anima] Tentativa de exclusão de arquivo fora do histórico:", filePath);
           continue;
         }
+        deleteThumbnail(filePath, join(historyBaseDir, ".thumbs"));
         rmSync(filePath, { force: true });
       }
       const dirPath = join(historyBaseDir, id);

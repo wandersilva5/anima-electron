@@ -27,8 +27,19 @@ function ChibiLogo() {
   )
 }
 
+function HistorySidebar({ open, onPick }: { open: boolean; onPick?: (item: GenerationResult) => void }) {
+  return (
+    <aside className={`${open ? 'w-72' : 'w-0'} hidden lg:block border-r border-border bg-surface-secondary overflow-hidden shrink-0 transition-all duration-300`}>
+      <div className="w-72 overflow-y-auto h-full">
+        <HistoryPanel onPick={onPick} />
+      </div>
+    </aside>
+  )
+}
+
 export default function App() {
   const { status, setStatus, selectImage, theme, toggleTheme, requestGenerate, setModels, loras, models, refreshLoras } = useSessionStore()
+  const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
   const [initialized, setInitialized] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [activeTab, setActiveTab] = useState<'generate' | 'improve' | 'pose' | 'recreate'>(() => {
@@ -117,15 +128,13 @@ export default function App() {
     <div className="h-screen flex flex-col bg-surface text-text-primary overflow-hidden">
       <header className="h-12 flex items-center px-4 border-b border-border bg-surface-secondary shrink-0">
         <div className="flex items-center gap-2">
-          {activeTab === 'generate' && (
-            <button
-              onClick={() => { const next = !historyOpen; setHistoryOpen(next); localStorage.setItem('anima-history-open', String(next)) }}
-              className="p-1.5 rounded-lg hover:bg-surface-tertiary text-text-secondary hover:text-text-primary transition-colors"
-              title={historyOpen ? 'Ocultar histórico' : 'Mostrar histórico'}
-            >
-              {historyOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-            </button>
-          )}
+          <button
+            onClick={() => { const next = !historyOpen; setHistoryOpen(next); localStorage.setItem('anima-history-open', String(next)) }}
+            className="p-1.5 rounded-lg hover:bg-surface-tertiary text-text-secondary hover:text-text-primary transition-colors"
+            title={historyOpen ? 'Ocultar histórico' : 'Mostrar histórico'}
+          >
+            {historyOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          </button>
           <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
             <ChibiLogo />
           </div>
@@ -213,11 +222,7 @@ export default function App() {
 
       {activeTab === 'generate' ? (
         <div className="flex-1 flex gap-0 overflow-hidden">
-          <aside className={`${historyOpen ? 'w-72' : 'w-0'} hidden lg:block border-r border-border bg-surface-secondary overflow-hidden shrink-0 transition-all duration-300`}>
-            <div className="w-72 overflow-y-auto h-full">
-              <HistoryPanel />
-            </div>
-          </aside>
+          <HistorySidebar open={historyOpen} onPick={undefined} />
 
           <main className="flex-1 flex items-center justify-center bg-surface overflow-hidden min-w-0">
             <PreviewPanel />
@@ -227,12 +232,17 @@ export default function App() {
             <PromptPanel />
           </aside>
         </div>
-      ) : activeTab === 'improve' ? (
-        <ImageImprove />
-      ) : activeTab === 'recreate' ? (
-        <RecreateTab />
       ) : (
-        <PoseStudio />
+        <div className="flex-1 flex gap-0 overflow-hidden min-w-0">
+          <HistorySidebar open={historyOpen} onPick={requestHistoryPick} />
+          {activeTab === 'improve' ? (
+            <ImageImprove />
+          ) : activeTab === 'recreate' ? (
+            <RecreateTab />
+          ) : (
+            <PoseStudio />
+          )}
+        </div>
       )}
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />

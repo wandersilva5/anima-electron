@@ -158,6 +158,28 @@ export function PoseStudio() {
     }).catch(() => {})
   }, [])
 
+  // Imagem escolhida no histórico (sidebar) vira a referência de personagem
+  const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
+  const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
+  useEffect(() => {
+    if (!pendingPick) return
+    const picked = pendingPick
+    requestHistoryPick(null)
+    const apply = (src: string) => {
+      setCharSrc(src)
+      setResultSrc(null)
+      setCharPrompt('')
+      setError(null)
+    }
+    if (picked.imageBase64) {
+      apply(picked.imageBase64)
+    } else if (picked.filePath) {
+      window.electronAPI.file.readImage(picked.filePath).then((data) => {
+        if (data) apply(data)
+      })
+    }
+  }, [pendingPick, requestHistoryPick])
+
   const detectPose = useCallback(async (src: string): Promise<Record<string, [number, number]> | null> => {
     setDetectingPose(true)
     setError(null)

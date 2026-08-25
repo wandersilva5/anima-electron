@@ -34,6 +34,8 @@ interface SessionState {
   addToHistory: (r: GenerationResult) => void
   setHistory: (h: GenerationResult[]) => void
   deleteHistory: (ids: string[]) => void
+  pendingHistoryPick: GenerationResult | null
+  requestHistoryPick: (item: GenerationResult | null) => void
   selectedId: string | null
   selectImage: (id: string | null) => void
   loras: LoraInfo[]
@@ -89,6 +91,8 @@ export const useSessionStore = create<SessionState>((set) => ({
     history: s.history.filter((h) => !ids.includes(h.id)),
     selectedId: ids.includes(s.selectedId ?? '') ? null : s.selectedId
   })),
+  pendingHistoryPick: null,
+  requestHistoryPick: (pendingHistoryPick) => set({ pendingHistoryPick }),
   selectedId: null,
   selectImage: (selectedId) => set({ selectedId }),
   loras: [],

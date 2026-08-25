@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     loadHistory: () => ipcRenderer.invoke("file:loadHistory"),
     deleteHistoryItems: (items) => ipcRenderer.invoke("file:deleteHistoryItems", items),
     readImage: (filePath) => ipcRenderer.invoke("file:readImage", filePath),
+    readThumbnail: (filePath) => ipcRenderer.invoke("file:readThumbnail", filePath),
     selectImage: () => ipcRenderer.invoke("file:selectImage")
   },
   pose: {

@@ -31,6 +31,30 @@ export function RecreateTab() {
 
   useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
+  // Imagem escolhida no histórico (sidebar) vira a imagem de origem
+  const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
+  const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
+  useEffect(() => {
+    if (!pendingPick) return
+    const picked = pendingPick
+    requestHistoryPick(null)
+    const apply = (src: string) => {
+      setOriginalSrc(src)
+      setResultSrc(null)
+      setCaption('')
+      setError(null)
+      setBlurred(false)
+      setShowingResult(true)
+    }
+    if (picked.imageBase64) {
+      apply(picked.imageBase64)
+    } else if (picked.filePath) {
+      window.electronAPI.file.readImage(picked.filePath).then((data) => {
+        if (data) apply(data)
+      })
+    }
+  }, [pendingPick, requestHistoryPick])
+
   useEffect(() => {
     setSelectedLora(null)
     const folder = MODEL_PROFILES[selectedModel].loraFolder

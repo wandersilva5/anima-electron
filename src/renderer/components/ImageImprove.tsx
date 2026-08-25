@@ -32,6 +32,29 @@ export function ImageImprove() {
   // Auto-select first compatible model
   useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
+  // Imagem escolhida no histórico (sidebar) vira a imagem de origem
+  const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
+  const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
+  useEffect(() => {
+    if (!pendingPick) return
+    const picked = pendingPick
+    requestHistoryPick(null)
+    const apply = (src: string) => {
+      setOriginalSrc(src)
+      setResultSrc(null)
+      setError(null)
+      setBrushMode(false)
+      setShowingResult(true)
+    }
+    if (picked.imageBase64) {
+      apply(picked.imageBase64)
+    } else if (picked.filePath) {
+      window.electronAPI.file.readImage(picked.filePath).then((data) => {
+        if (data) apply(data)
+      })
+    }
+  }, [pendingPick, requestHistoryPick])
+
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
     const reader = new FileReader()

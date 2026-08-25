@@ -51,6 +51,7 @@ interface ElectronAPI {
     loadHistory: () => Promise<SavedHistoryItem[]>
     deleteHistoryItems: (items: { id: string; filePath: string }[]) => Promise<void>
     readImage: (filePath: string) => Promise<string | null>
+    readThumbnail: (filePath: string) => Promise<string | null>
     selectImage: () => Promise<string | null>
   }
   pose: {

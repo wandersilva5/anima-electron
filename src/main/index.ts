@@ -7,6 +7,7 @@ import { WorkflowManager } from './workflow'
 import { LoraScanner } from './loraScanner'
 import { ModelScanner } from './modelScanner'
 import { SettingsManager } from './settings'
+import { getThumbnailDataUrl, deleteThumbnail } from './thumbnails'
 import type { GenerationParams, DiffusionModelId } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 
@@ -732,6 +733,30 @@ function setupIPC(): void {
     }
   })
 
+  ipcMain.handle('file:readThumbnail', async (event, filePath: string) => {
+    requireMainWindow(event)
+    try {
+      const historyBaseDir = getHistoryBaseDir()
+      const allowedBases = [historyBaseDir, settingsManager.resolvedModelsPath, settingsManager.resolvedLorasPath]
+      if (!allowedBases.some(base => isPathSafe(filePath, base))) {
+        console.warn('[Anima] Tentativa de leitura de arquivo fora das pastas permitidas:', filePath)
+        return null
+      }
+
+      // Apenas extensões de imagem
+      const extMatch = /\.([a-z0-9]+)$/i.exec(filePath)
+      const ext = extMatch ? extMatch[1].toLowerCase() : ''
+      if (!['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext)) return null
+
+      const size = statSync(filePath).size
+      if (size > 50 * 1024 * 1024) return null
+
+      return getThumbnailDataUrl(filePath, join(historyBaseDir, '.thumbs'))
+    } catch {
+      return null
+    }
+  })
+
   ipcMain.handle('file:loadHistory', async (event) => {
     requireMainWindow(event)
     const historyBaseDir = getHistoryBaseDir()
@@ -783,6 +808,8 @@ function setupIPC(): void {
           console.warn('[Anima] Tentativa de exclusão de arquivo fora do histórico:', filePath)
           continue
         }
+        // Remove a miniatura antes da imagem (o hash usa stat do arquivo original)
+        deleteThumbnail(filePath, join(historyBaseDir, '.thumbs'))
         rmSync(filePath, { force: true })
       }
       const dirPath = join(historyBaseDir, id)
