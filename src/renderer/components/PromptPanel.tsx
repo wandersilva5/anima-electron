@@ -33,13 +33,11 @@ export function PromptPanel() {
           modelName={params.modelName}
           onModelChange={params.setModel}
           models={models}
-          loraName={params.loraName}
-          onLoraChange={(name) => params.setLora(name)}
           loras={loras}
-          loraStrengthModel={params.loraStrengthModel}
-          loraStrengthClip={params.loraStrengthClip}
-          onLoraStrengthModelChange={(v) => params.setLora(params.loraName, v, undefined)}
-          onLoraStrengthClipChange={(v) => params.setLora(params.loraName, undefined, v)}
+          selectedLoras={params.loras}
+          onToggleLora={params.toggleLora}
+          onClearLoras={params.clearLoras}
+          onLoraStrengthChange={params.setLoraStrength}
           refreshLorasFn={refreshLoras}
         />
 

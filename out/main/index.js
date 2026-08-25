@@ -735,11 +735,13 @@ class WorkflowManager {
     const prompt = {};
     const skipNodeIds = /* @__PURE__ */ new Set();
     const isImg2Img = !!params.imagePath;
-    const hasLora = !!params.loraName;
+    const loraSelections = Array.isArray(params.loras) ? params.loras.filter((l) => l && typeof l.name === "string" && l.name !== "None") : [];
+    const hasLora = loraSelections.length > 0;
     if (!hasLora) {
-      const loraNode = nodes.find((n) => n.type === "LoraLoader" || n.type === "LoraLoaderModelOnly");
-      if (loraNode) {
-        skipNodeIds.add(loraNode.id);
+      for (const n of nodes) {
+        if (n.type === "LoraLoader" || n.type === "LoraLoaderModelOnly") {
+          skipNodeIds.add(n.id);
+        }
       }
     }
     for (const node of nodes) {
@@ -776,22 +778,16 @@ class WorkflowManager {
           break;
         }
         case "LoraLoader": {
-          if (params.loraName) {
-            widgetValues[0] = params.loraName;
-          } else {
-            widgetValues[0] = "None";
-          }
-          widgetValues[1] = params.loraStrengthModel;
-          widgetValues[2] = params.loraStrengthClip;
+          const first = loraSelections[0];
+          widgetValues[0] = first ? first.name : "None";
+          widgetValues[1] = first ? first.strengthModel : 0.5;
+          widgetValues[2] = first ? first.strengthClip : 0.5;
           break;
         }
         case "LoraLoaderModelOnly": {
-          if (params.loraName) {
-            widgetValues[0] = params.loraName;
-          } else {
-            widgetValues[0] = "None";
-          }
-          widgetValues[1] = params.loraStrengthModel;
+          const first = loraSelections[0];
+          widgetValues[0] = first ? first.name : "None";
+          widgetValues[1] = first ? first.strengthModel : 0.5;
           break;
         }
         case "UNETLoader": {
@@ -885,6 +881,49 @@ class WorkflowManager {
         }
       }
       prompt[String(node.id)] = nodeEntry;
+    }
+    if (hasLora && loraSelections.length > 1) {
+      const templateLoraNode = nodes.find((n) => n.type === "LoraLoader" || n.type === "LoraLoaderModelOnly");
+      if (!templateLoraNode) {
+        console.warn("[WorkflowManager] Múltiplos LoRAs solicitados mas o workflow não tem nó LoraLoader");
+      } else {
+        const isModelOnly = templateLoraNode.type === "LoraLoaderModelOnly";
+        const clampStrength = (v) => Math.min(2, Math.max(0, Number.isFinite(v) ? v : 0.5));
+        let prevId = templateLoraNode.id;
+        const chainIds = /* @__PURE__ */ new Set();
+        loraSelections.slice(1).forEach((lora, idx) => {
+          const chainId = 87e3 + idx;
+          const inputs = {
+            lora_name: lora.name,
+            strength_model: clampStrength(lora.strengthModel)
+          };
+          if (isModelOnly) {
+            inputs.model = [String(prevId), 0];
+          } else {
+            inputs.strength_clip = clampStrength(lora.strengthClip);
+            inputs.model = [String(prevId), 0];
+            inputs.clip = [String(prevId), 1];
+          }
+          prompt[String(chainId)] = {
+            class_type: templateLoraNode.type,
+            _meta: { title: `${templateLoraNode.type} (${idx + 2}º LoRA)` },
+            inputs
+          };
+          chainIds.add(String(chainId));
+          prevId = chainId;
+        });
+        for (const [nodeKey, entry] of Object.entries(prompt)) {
+          if (chainIds.has(nodeKey)) continue;
+          const e = entry;
+          if (!e.inputs) continue;
+          for (const [inputName, val] of Object.entries(e.inputs)) {
+            if ((inputName === "model" || inputName === "clip") && Array.isArray(val) && val[0] === String(templateLoraNode.id)) {
+              e.inputs[inputName] = [String(prevId), val[1]];
+            }
+          }
+        }
+        console.log(`[Anima] Cadeia de ${loraSelections.length} LoRAs montada (template + ${loraSelections.length - 1} nós extra)`);
+      }
     }
     if (params.poseData && !params.poseImageFilename) {
       const poseNode = nodes.find((n) => n.type === "VNCCS_PoseGenerator");
@@ -1248,6 +1287,7 @@ function getThumbnailDataUrl(filePath, cacheDir) {
     return null;
   }
 }
+const MAX_LORAS = 10;
 let mainWindow = null;
 let comfyClient;
 let comfyLauncher;
@@ -1463,15 +1503,29 @@ function sanitizeGenerationParams(raw) {
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
-    loraName: strOrNull(p.loraName),
     filenamePrefix: str(p.filenamePrefix, "anima"),
     seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
     steps: Math.floor(num(p.steps, 20, 1, 50)),
     cfg: num(p.cfg, 5, 1, 20),
     width: Math.floor(num(p.width, 648, 64, 4096)),
     height: Math.floor(num(p.height, 1152, 64, 4096)),
-    loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
-    loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
+    loras: (() => {
+      const arr = Array.isArray(p.loras) ? p.loras : [];
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const item of arr.slice(0, MAX_LORAS)) {
+        if (!item || typeof item !== "object") continue;
+        const name = strOrNull(item.name);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        out.push({
+          name,
+          strengthModel: num(item.strengthModel, 0.5, 0, 2),
+          strengthClip: num(item.strengthClip, 0.5, 0, 2)
+        });
+      }
+      return out;
+    })(),
     denoise: p.denoise !== void 0 ? num(p.denoise, 1, 0.05, 1) : void 0,
     imageBase64: typeof p.imageBase64 === "string" ? p.imageBase64 : void 0,
     maskBase64: typeof p.maskBase64 === "string" ? p.maskBase64 : void 0,
@@ -1562,7 +1616,7 @@ function setupIPC() {
     requireMainWindow(event);
     const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando geração...");
-    console.log("[Anima] Modelo:", params.modelName, "| LoRA:", params.loraName ?? "nenhum");
+    console.log("[Anima] Modelo:", params.modelName, "| LoRAs:", params.loras.length > 0 ? params.loras.map((l) => l.name).join(", ") : "nenhum");
     console.log("[Anima] Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
     console.log("[Anima] Seed:", params.seed, "Steps:", params.steps, "CFG:", params.cfg);
     const availableNodes = await comfyClient.getAvailableNodes();

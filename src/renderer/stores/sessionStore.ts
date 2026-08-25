@@ -11,7 +11,9 @@ interface GenerationParamsState extends GenerationParams {
   setCfg: (c: number) => void
   setWidth: (w: number) => void
   setHeight: (h: number) => void
-  setLora: (name: string | null, modelStr?: number, clipStr?: number) => void
+  toggleLora: (name: string) => void
+  clearLoras: () => void
+  setLoraStrength: (name: string, kind: 'model' | 'clip', v: number) => void
   setModel: (name: string) => void
   setDiffusionModel: (id: DiffusionModelId) => void
   randomizeSeed: () => void
@@ -67,9 +69,7 @@ const defaultParams: GenerationParams = {
   cfg: profile.defaults.cfg,
   width: profile.defaults.width,
   height: profile.defaults.height,
-  loraName: null,
-  loraStrengthModel: 0.5,
-  loraStrengthClip: 0.5,
+  loras: [],
   modelName: '',
   filenamePrefix: localStorage.getItem('anima-filename-prefix') || 'anima'
 }
@@ -97,8 +97,13 @@ export const useSessionStore = create<SessionState>((set) => ({
   selectImage: (selectedId) => set({ selectedId }),
   loras: [],
   setLoras: (loras) => set((s) => {
-    if (!s.params.loraName && loras.length > 0) {
-      return { loras, params: { ...s.params, loraName: loras[0].name } }
+    // Remove seleções que não existem mais na pasta; mantém as válidas
+    const valid = s.params.loras.filter((sel) => loras.some((l) => l.name === sel.name))
+    if (valid.length === 0 && loras.length > 0) {
+      return { loras, params: { ...s.params, loras: [{ name: loras[0].name, strengthModel: 0.5, strengthClip: 0.5 }] } }
+    }
+    if (valid.length !== s.params.loras.length) {
+      return { loras, params: { ...s.params, loras: valid } }
     }
     return { loras }
   }),
@@ -150,13 +155,24 @@ export const useSessionStore = create<SessionState>((set) => ({
     setCfg: (cfg) => set((s) => ({ params: { ...s.params, cfg } })),
     setWidth: (width) => set((s) => ({ params: { ...s.params, width } })),
     setHeight: (height) => set((s) => ({ params: { ...s.params, height } })),
-    setLora: (loraName, modelStr, clipStr) =>
+    toggleLora: (name) =>
+      set((s) => {
+        const exists = s.params.loras.some((l) => l.name === name)
+        const next = exists
+          ? s.params.loras.filter((l) => l.name !== name)
+          : [...s.params.loras, { name, strengthModel: 0.5, strengthClip: 0.5 }]
+        return { params: { ...s.params, loras: next } }
+      }),
+    clearLoras: () => set((s) => ({ params: { ...s.params, loras: [] } })),
+    setLoraStrength: (name, kind, value) =>
       set((s) => ({
         params: {
           ...s.params,
-          loraName,
-          loraStrengthModel: modelStr ?? s.params.loraStrengthModel,
-          loraStrengthClip: clipStr ?? s.params.loraStrengthClip
+          loras: s.params.loras.map((l) =>
+            l.name === name
+              ? (kind === 'model' ? { ...l, strengthModel: value } : { ...l, strengthClip: value })
+              : l
+          )
         }
       })),
     setModel: (modelName) => set((s) => ({ params: { ...s.params, modelName } })),
@@ -172,8 +188,6 @@ export const useSessionStore = create<SessionState>((set) => ({
         const found = compatible.find(m => m.name === s.params.modelName)
         const modelName = found ? s.params.modelName : (compatible[0]?.name ?? '')
 
-        const firstLora = s.loras.length > 0 ? s.loras[0].name : null
-
         const nextParams = {
           ...s.params,
           diffusionModel,
@@ -183,7 +197,7 @@ export const useSessionStore = create<SessionState>((set) => ({
           cfg: prof.defaults.cfg,
           width: prof.defaults.width,
           height: prof.defaults.height,
-          loraName: firstLora,
+          loras: [],
           modelName
         }
 

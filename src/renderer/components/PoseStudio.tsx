@@ -7,6 +7,7 @@ import { ModelSidebar } from './ModelSidebar'
 import { renderOpenPose, type Joints } from '../utils/openposeRenderer'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
+import { useLoraSelection } from '../hooks/useLoraSelection'
 
 const POSE_CANVAS = { width: 512, height: 1536 }
 
@@ -123,9 +124,7 @@ export function PoseStudio() {
 
   const selectedModel: DiffusionModelId = 'anima'
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
-  const [selectedLora, setSelectedLora] = useState<string | null>(null)
-  const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
-  const [loraStrengthClip, setLoraStrengthClip] = useState(0.5)
+  const { selectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection()
   const [denoise, setDenoise] = useState(0.9)
   const [captioning, setCaptioning] = useState(false)
   const [charPrompt, setCharPrompt] = useState('')
@@ -151,7 +150,7 @@ export function PoseStudio() {
   useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
 
   useEffect(() => {
-    setSelectedLora(null)
+    clearLoras()
     const folder = MODEL_PROFILES['anima'].loraFolder
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
@@ -307,9 +306,7 @@ export function PoseStudio() {
         width: profile.defaults.width,
         height: profile.defaults.height,
         modelName: selectedCheckpoint,
-        loraName: selectedLora,
-        loraStrengthModel,
-        loraStrengthClip,
+        loras: selectedLoras,
         imageBase64: charSrc,
         denoise,
         filenamePrefix: 'anima-pose',
@@ -339,9 +336,7 @@ export function PoseStudio() {
             width: profile.defaults.width,
             height: profile.defaults.height,
             modelName: selectedCheckpoint,
-            loraName: selectedLora,
-            loraStrengthModel,
-            loraStrengthClip,
+            loras: selectedLoras,
           },
           timestamp: Date.now()
         }
@@ -353,7 +348,7 @@ export function PoseStudio() {
       stopProgress()
       setGenerating(false)
     }
-  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, denoise, profile, detectPose, renderPoseToCharCanvas, startProgress, addToHistory])
+  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLoras, denoise, profile, detectPose, renderPoseToCharCanvas, startProgress, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -450,13 +445,11 @@ export function PoseStudio() {
               modelName={selectedCheckpoint}
               onModelChange={setSelectedCheckpoint}
               models={models}
-              loraName={selectedLora}
-              onLoraChange={setSelectedLora}
               loras={loras}
-              loraStrengthModel={loraStrengthModel}
-              loraStrengthClip={loraStrengthClip}
-              onLoraStrengthModelChange={setLoraStrengthModel}
-              onLoraStrengthClipChange={setLoraStrengthClip}
+              selectedLoras={selectedLoras}
+              onToggleLora={toggleLora}
+              onClearLoras={clearLoras}
+              onLoraStrengthChange={setLoraStrength}
               refreshLorasFn={refreshLoras}
             />
 

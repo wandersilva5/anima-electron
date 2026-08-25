@@ -6,6 +6,7 @@ import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
 import { ModelSidebar } from './ModelSidebar'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
+import { useLoraSelection } from '../hooks/useLoraSelection'
 import { resizeImageForModel } from '../utils/imageResize'
 
 export function ImageImprove() {
@@ -13,9 +14,7 @@ export function ImageImprove() {
 
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
-  const [selectedLora, setSelectedLora] = useState<string | null>(null)
-  const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
-  const [loraStrengthClip, setLoraStrengthClip] = useState(0.5)
+  const { selectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection()
   const [prompt, setPrompt] = useState('')
   const [denoise, setDenoise] = useState(0.85)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
@@ -128,9 +127,7 @@ export function ImageImprove() {
         width: prof.defaults.width,
         height: prof.defaults.height,
         modelName: selectedCheckpoint,
-        loraName: selectedLora,
-        loraStrengthModel,
-        loraStrengthClip,
+        loras: selectedLoras,
         imageBase64,
         denoise,
         filenamePrefix: 'anima-improve',
@@ -156,9 +153,7 @@ export function ImageImprove() {
             width: prof.defaults.width,
             height: prof.defaults.height,
             modelName: selectedCheckpoint,
-            loraName: selectedLora,
-            loraStrengthModel,
-            loraStrengthClip,
+            loras: selectedLoras,
           },
           timestamp: Date.now()
         }
@@ -169,7 +164,7 @@ export function ImageImprove() {
     } finally {
       setGenerating(false)
     }
-  }, [originalSrc, prompt, selectedModel, denoise, brushMode, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, addToHistory])
+  }, [originalSrc, prompt, selectedModel, denoise, brushMode, selectedCheckpoint, selectedLoras, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -337,13 +332,11 @@ export function ImageImprove() {
               modelName={selectedCheckpoint}
               onModelChange={setSelectedCheckpoint}
               models={models}
-              loraName={selectedLora}
-              onLoraChange={setSelectedLora}
               loras={loras}
-              loraStrengthModel={loraStrengthModel}
-              loraStrengthClip={loraStrengthClip}
-              onLoraStrengthModelChange={setLoraStrengthModel}
-              onLoraStrengthClipChange={setLoraStrengthClip}
+              selectedLoras={selectedLoras}
+              onToggleLora={toggleLora}
+              onClearLoras={clearLoras}
+              onLoraStrengthChange={setLoraStrength}
               refreshLorasFn={refreshLoras}
             />
 

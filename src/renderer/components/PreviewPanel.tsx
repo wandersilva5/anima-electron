@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { Download, Trash2, ImageOff, Eye, EyeOff } from 'lucide-react'
+import { getSelectedLoras, loraDisplayName } from '../utils/loraParams'
 
 export function PreviewPanel() {
   const { history, selectedId, selectImage } = useSessionStore()
@@ -35,20 +36,26 @@ export function PreviewPanel() {
     )
   }
 
-  const loadMetadata = (item: typeof selected) => [
-    { label: 'Modelo', value: item.params.modelName.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? item.params.modelName },
-    { label: 'Seed', value: item.params.seed },
-    { label: 'Steps', value: item.params.steps },
-    { label: 'CFG', value: item.params.cfg },
-    { label: 'Resolução', value: `${item.params.width}×${item.params.height}` },
-    ...(item.params.loraName
-      ? [
-        { label: 'LoRA', value: item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? item.params.loraName },
-        { label: 'LoRA Model', value: item.params.loraStrengthModel.toFixed(2) },
-        { label: 'LoRA CLIP', value: item.params.loraStrengthClip.toFixed(2) }
-      ]
-      : [])
-  ]
+  const loadMetadata = (item: typeof selected) => {
+    const usedLoras = getSelectedLoras(item.params)
+    return [
+      { label: 'Modelo', value: item.params.modelName.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? item.params.modelName },
+      { label: 'Seed', value: item.params.seed },
+      { label: 'Steps', value: item.params.steps },
+      { label: 'CFG', value: item.params.cfg },
+      { label: 'Resolução', value: `${item.params.width}×${item.params.height}` },
+      ...usedLoras.flatMap((lora, i) => [
+        {
+          label: usedLoras.length > 1 ? `LoRA ${i + 1}` : 'LoRA',
+          value: loraDisplayName(lora.name)
+        },
+        {
+          label: usedLoras.length > 1 ? `LoRA ${i + 1} força` : 'LoRA força',
+          value: `${lora.strengthModel.toFixed(2)} / ${lora.strengthClip.toFixed(2)}`
+        }
+      ])
+    ]
+  }
 
   return (
     <div className="flex w-full h-full p-6 gap-6 overflow-hidden">

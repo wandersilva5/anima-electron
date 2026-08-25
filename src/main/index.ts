@@ -9,6 +9,7 @@ import { ModelScanner } from './modelScanner'
 import { SettingsManager } from './settings'
 import { getThumbnailDataUrl, deleteThumbnail } from './thumbnails'
 import type { GenerationParams, DiffusionModelId } from '@shared/types'
+import { MAX_LORAS } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 let mainWindow: BrowserWindow | null = null
@@ -273,15 +274,29 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
     prompt: str(p.prompt),
     negativePrompt: str(p.negativePrompt),
     modelName: str(p.modelName),
-    loraName: strOrNull(p.loraName),
     filenamePrefix: str(p.filenamePrefix, 'anima'),
     seed: Math.max(0, Math.floor(num(p.seed, 0, 0, 2147483647))),
     steps: Math.floor(num(p.steps, 20, 1, 50)),
     cfg: num(p.cfg, 5, 1, 20),
     width: Math.floor(num(p.width, 648, 64, 4096)),
     height: Math.floor(num(p.height, 1152, 64, 4096)),
-    loraStrengthModel: num(p.loraStrengthModel, 0.5, 0, 2),
-    loraStrengthClip: num(p.loraStrengthClip, 0.5, 0, 2),
+    loras: (() => {
+      const arr = Array.isArray(p.loras) ? p.loras : []
+      const seen = new Set<string>()
+      const out: Array<{ name: string; strengthModel: number; strengthClip: number }> = []
+      for (const item of arr.slice(0, MAX_LORAS)) {
+        if (!item || typeof item !== 'object') continue
+        const name = strOrNull((item as Record<string, unknown>).name)
+        if (!name || seen.has(name)) continue
+        seen.add(name)
+        out.push({
+          name,
+          strengthModel: num((item as Record<string, unknown>).strengthModel, 0.5, 0, 2),
+          strengthClip: num((item as Record<string, unknown>).strengthClip, 0.5, 0, 2)
+        })
+      }
+      return out
+    })(),
     denoise: p.denoise !== undefined ? num(p.denoise, 1, 0.05, 1) : undefined,
     imageBase64: typeof p.imageBase64 === 'string' ? p.imageBase64 : undefined,
     maskBase64: typeof p.maskBase64 === 'string' ? p.maskBase64 : undefined,
@@ -389,7 +404,9 @@ function setupIPC(): void {
     requireMainWindow(event)
     const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams
     console.log('[Anima] Iniciando geração...')
-    console.log('[Anima] Modelo:', params.modelName, '| LoRA:', params.loraName ?? 'nenhum')
+    console.log('[Anima] Modelo:', params.modelName, '| LoRAs:', params.loras.length > 0
+      ? params.loras.map((l) => l.name).join(', ')
+      : 'nenhum')
     console.log('[Anima] Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
     console.log('[Anima] Seed:', params.seed, 'Steps:', params.steps, 'CFG:', params.cfg)
     const availableNodes = await comfyClient.getAvailableNodes()

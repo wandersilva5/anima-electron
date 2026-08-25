@@ -6,6 +6,7 @@ import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
+import { useLoraSelection } from '../hooks/useLoraSelection'
 import { resizeImageForModel } from '../utils/imageResize'
 
 export function RecreateTab() {
@@ -13,9 +14,7 @@ export function RecreateTab() {
 
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
-  const [selectedLora, setSelectedLora] = useState<string | null>(null)
-  const [loraStrengthModel, setLoraStrengthModel] = useState(0.5)
-  const [loraStrengthClip, setLoraStrengthClip] = useState(0.5)
+  const { selectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection()
   const [denoise, setDenoise] = useState(0.85)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
@@ -56,12 +55,12 @@ export function RecreateTab() {
   }, [pendingPick, requestHistoryPick])
 
   useEffect(() => {
-    setSelectedLora(null)
+    clearLoras()
     const folder = MODEL_PROFILES[selectedModel].loraFolder
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
     }).catch(() => { })
-  }, [selectedModel])
+  }, [selectedModel, clearLoras])
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -145,9 +144,7 @@ export function RecreateTab() {
         width: prof.defaults.width,
         height: prof.defaults.height,
         modelName: selectedCheckpoint,
-        loraName: selectedLora,
-        loraStrengthModel,
-        loraStrengthClip,
+        loras: selectedLoras,
         imageBase64,
         denoise,
         filenamePrefix: 'anima-recreate'
@@ -172,9 +169,7 @@ export function RecreateTab() {
             width: prof.defaults.width,
             height: prof.defaults.height,
             modelName: selectedCheckpoint,
-            loraName: selectedLora,
-            loraStrengthModel,
-            loraStrengthClip,
+            loras: selectedLoras,
           },
           timestamp: Date.now()
         }
@@ -186,7 +181,7 @@ export function RecreateTab() {
       stopProgress()
       setGenerating(false)
     }
-  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLora, loraStrengthModel, loraStrengthClip, startProgress, addToHistory])
+  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
 
   const handleRecreate = useCallback(async () => {
     if (!originalSrc) return
@@ -320,13 +315,11 @@ export function RecreateTab() {
               modelName={selectedCheckpoint}
               onModelChange={setSelectedCheckpoint}
               models={models}
-              loraName={selectedLora}
-              onLoraChange={setSelectedLora}
               loras={loras}
-              loraStrengthModel={loraStrengthModel}
-              loraStrengthClip={loraStrengthClip}
-              onLoraStrengthModelChange={setLoraStrengthModel}
-              onLoraStrengthClipChange={setLoraStrengthClip}
+              selectedLoras={selectedLoras}
+              onToggleLora={toggleLora}
+              onClearLoras={clearLoras}
+              onLoraStrengthChange={setLoraStrength}
               refreshLorasFn={refreshLoras}
             />
 

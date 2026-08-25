@@ -267,12 +267,16 @@ export class WorkflowManager {
     const skipNodeIds = new Set<number>()
 
     const isImg2Img = !!params.imagePath
-    const hasLora = !!params.loraName
+    const loraSelections = Array.isArray(params.loras)
+      ? params.loras.filter(l => l && typeof l.name === 'string' && l.name !== 'None')
+      : []
+    const hasLora = loraSelections.length > 0
 
     if (!hasLora) {
-      const loraNode = nodes.find(n => n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly')
-      if (loraNode) {
-        skipNodeIds.add(loraNode.id)
+      for (const n of nodes) {
+        if (n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly') {
+          skipNodeIds.add(n.id)
+        }
       }
     }
 
@@ -311,22 +315,16 @@ export class WorkflowManager {
           break
         }
         case 'LoraLoader': {
-          if (params.loraName) {
-            widgetValues[0] = params.loraName
-          } else {
-            widgetValues[0] = 'None'
-          }
-          widgetValues[1] = params.loraStrengthModel
-          widgetValues[2] = params.loraStrengthClip
+          const first = loraSelections[0]
+          widgetValues[0] = first ? first.name : 'None'
+          widgetValues[1] = first ? first.strengthModel : 0.5
+          widgetValues[2] = first ? first.strengthClip : 0.5
           break
         }
         case 'LoraLoaderModelOnly': {
-          if (params.loraName) {
-            widgetValues[0] = params.loraName
-          } else {
-            widgetValues[0] = 'None'
-          }
-          widgetValues[1] = params.loraStrengthModel
+          const first = loraSelections[0]
+          widgetValues[0] = first ? first.name : 'None'
+          widgetValues[1] = first ? first.strengthModel : 0.5
           break
         }
         case 'UNETLoader': {
@@ -432,6 +430,62 @@ export class WorkflowManager {
       }
 
       prompt[String(node.id)] = nodeEntry
+    }
+
+    // Multi-LoRA: encadeia os LoRAs adicionais (a partir do segundo) em série
+    // após o nó template do workflow. O primeiro preenche o próprio nó
+    // LoraLoader/LoraLoaderModelOnly do JSON; cada nó extra recebe model/clip
+    // do anterior, e todos os consumidores do template são redirecionados para
+    // o último elo da cadeia.
+    if (hasLora && loraSelections.length > 1) {
+      const templateLoraNode = nodes.find(n => n.type === 'LoraLoader' || n.type === 'LoraLoaderModelOnly')
+      if (!templateLoraNode) {
+        console.warn('[WorkflowManager] Múltiplos LoRAs solicitados mas o workflow não tem nó LoraLoader')
+      } else {
+        const isModelOnly = templateLoraNode.type === 'LoraLoaderModelOnly'
+        const clampStrength = (v: number) => Math.min(2, Math.max(0, Number.isFinite(v) ? v : 0.5))
+
+        let prevId: number = templateLoraNode.id
+        const chainIds = new Set<string>()
+        loraSelections.slice(1).forEach((lora, idx) => {
+          const chainId = 87000 + idx
+          const inputs: Record<string, unknown> = {
+            lora_name: lora.name,
+            strength_model: clampStrength(lora.strengthModel)
+          }
+          if (isModelOnly) {
+            inputs.model = [String(prevId), 0]
+          } else {
+            inputs.strength_clip = clampStrength(lora.strengthClip)
+            inputs.model = [String(prevId), 0]
+            inputs.clip = [String(prevId), 1]
+          }
+          prompt[String(chainId)] = {
+            class_type: templateLoraNode.type,
+            _meta: { title: `${templateLoraNode.type} (${idx + 2}º LoRA)` },
+            inputs
+          }
+          chainIds.add(String(chainId))
+          prevId = chainId
+        })
+
+        // Redireciona model/clip que apontavam para o template para o fim da
+        // cadeia (exceto os próprios nós da cadeia, que já estão ligados em série)
+        for (const [nodeKey, entry] of Object.entries(prompt)) {
+          if (chainIds.has(nodeKey)) continue
+          const e = entry as { inputs?: Record<string, unknown> }
+          if (!e.inputs) continue
+          for (const [inputName, val] of Object.entries(e.inputs)) {
+            if (
+              (inputName === 'model' || inputName === 'clip') &&
+              Array.isArray(val) && val[0] === String(templateLoraNode.id)
+            ) {
+              e.inputs[inputName] = [String(prevId), val[1] as number]
+            }
+          }
+        }
+        console.log(`[Anima] Cadeia de ${loraSelections.length} LoRAs montada (template + ${loraSelections.length - 1} nós extra)`)
+      }
     }
 
     // Inject pose data into VNCCS_PoseGenerator node if the workflow already has one.

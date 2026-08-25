@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useFilterModels } from '../hooks/useFilterModels'
 import { useRefreshLoras } from '../hooks/useRefreshLoras'
-import { Search, RefreshCw, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { Search, RefreshCw, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { MODEL_PROFILES, MODEL_IDS } from '@shared/modelProfiles'
-import type { DiffusionModelId, ModelInfo, LoraInfo } from '@shared/types'
+import type { DiffusionModelId, ModelInfo, LoraInfo, LoraSelection } from '@shared/types'
 import { SafeImage } from './SafeImage'
 
 interface ModelSidebarProps {
@@ -13,13 +13,11 @@ interface ModelSidebarProps {
   modelName: string
   onModelChange: (name: string) => void
   models: ModelInfo[]
-  loraName: string | null
-  onLoraChange: (name: string | null) => void
+  selectedLoras: LoraSelection[]
+  onToggleLora: (name: string) => void
+  onClearLoras: () => void
+  onLoraStrengthChange: (name: string, kind: 'model' | 'clip', v: number) => void
   loras: LoraInfo[]
-  loraStrengthModel: number
-  loraStrengthClip: number
-  onLoraStrengthModelChange: (v: number) => void
-  onLoraStrengthClipChange: (v: number) => void
   refreshLorasFn: () => Promise<void>
 }
 
@@ -30,13 +28,11 @@ export function ModelSidebar({
   modelName,
   onModelChange,
   models,
-  loraName,
-  onLoraChange,
+  selectedLoras,
+  onToggleLora,
+  onClearLoras,
+  onLoraStrengthChange,
   loras,
-  loraStrengthModel,
-  loraStrengthClip,
-  onLoraStrengthModelChange,
-  onLoraStrengthClipChange,
   refreshLorasFn
 }: ModelSidebarProps) {
   const [modelsOpen, setModelsOpen] = useState(false)
@@ -51,8 +47,12 @@ export function ModelSidebar({
   )
 
   const profile = MODEL_PROFILES[diffusionModel]
+  const hasSelection = selectedLoras.length > 0
 
   const displayModelName = (name: string): string =>
+    name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
+
+  const displayLoraName = (name: string): string =>
     name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
 
   return (
@@ -159,7 +159,7 @@ export function ModelSidebar({
           >
             {lorasOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             LoRA
-            {loraName && <span className="ml-1 text-accent font-normal normal-case">(ativo)</span>}
+            {hasSelection && <span className="ml-1 text-accent font-normal normal-case">({selectedLoras.length})</span>}
           </button>
           <button
             onClick={handleRefresh}
@@ -209,11 +209,11 @@ export function ModelSidebar({
               <div className="max-h-60 overflow-y-auto custom-scroll">
                 <div className="grid grid-cols-3 gap-2">
                   <button
-                    onClick={() => onLoraChange(null)}
+                    onClick={onClearLoras}
                     className={`
                       aspect-square rounded-xl border-2 flex items-center justify-center text-xs
                       transition-all
-                      ${!loraName
+                      ${!hasSelection
                         ? 'border-accent bg-accent/10 text-accent'
                         : 'border-border bg-surface-tertiary text-text-muted hover:border-text-muted'
                       }
@@ -222,16 +222,18 @@ export function ModelSidebar({
                     None
                   </button>
                   {filteredLoras.map((lora) => {
-                    const displayName = lora.name.replace(/\.(safetensors|ckpt)$/, '').split('/').pop() ?? lora.name
+                    const displayName = displayLoraName(lora.name)
+                    const selectionIndex = selectedLoras.findIndex((sel) => sel.name === lora.name)
+                    const isSelected = selectionIndex >= 0
                     return (
                       <button
                         key={lora.name}
-                        onClick={() => onLoraChange(lora.name)}
-                        title={displayName}
+                        onClick={() => onToggleLora(lora.name)}
+                        title={isSelected ? `${displayName} (clique para remover)` : displayName}
                         className={`
                           relative aspect-square rounded-xl border-2 overflow-hidden
                           transition-all group
-                          ${loraName === lora.name
+                          ${isSelected
                             ? 'border-accent ring-1 ring-accent'
                             : 'border-border hover:border-text-muted'
                           }
@@ -250,8 +252,13 @@ export function ModelSidebar({
                             </span>
                           </div>
                         )}
-                        {loraName === lora.name && (
-                          <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                        {isSelected && (
+                          <>
+                            <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-accent text-white text-[9px] font-bold flex items-center justify-center">
+                              {selectionIndex + 1}
+                            </div>
+                            <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                          </>
                         )}
                       </button>
                     )
@@ -260,40 +267,59 @@ export function ModelSidebar({
               </div>
             )}
 
-            {loraName && (
-              <div className="mt-3 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-text-muted">Model Strength</label>
-                    <span className="text-xs text-text-secondary font-mono">{loraStrengthModel.toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={loraStrengthModel}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(e) => onLoraStrengthModelChange(Number(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
-                {profile.hasLoraClipStrength && (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-text-muted">CLIP Strength</label>
-                      <span className="text-xs text-text-secondary font-mono">{loraStrengthClip.toFixed(2)}</span>
+            {hasSelection && (
+              <div className="mt-3 space-y-3">
+                {selectedLoras.map((sel, idx) => (
+                  <div key={sel.name} className="p-2 rounded-xl border border-border bg-surface space-y-2">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] text-text-secondary font-medium truncate flex items-center gap-1.5 min-w-0">
+                        <span className="w-4 h-4 rounded-full bg-accent text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="truncate" title={displayLoraName(sel.name)}>{displayLoraName(sel.name)}</span>
+                      </span>
+                      <button
+                        onClick={() => onToggleLora(sel.name)}
+                        className="p-0.5 rounded text-text-muted hover:text-error hover:bg-surface-tertiary transition-colors shrink-0"
+                        title="Remover LoRA"
+                      >
+                        <X size={12} />
+                      </button>
                     </div>
-                    <input
-                      type="range"
-                      value={loraStrengthClip}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      onChange={(e) => onLoraStrengthClipChange(Number(e.target.value))}
-                      className="w-full"
-                    />
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] text-text-muted">Model Strength</label>
+                        <span className="text-[10px] text-text-secondary font-mono">{sel.strengthModel.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        value={sel.strengthModel}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        onChange={(e) => onLoraStrengthChange(sel.name, 'model', Number(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                    {profile.hasLoraClipStrength && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] text-text-muted">CLIP Strength</label>
+                          <span className="text-[10px] text-text-secondary font-mono">{sel.strengthClip.toFixed(2)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          value={sel.strengthClip}
+                          min={0}
+                          max={2}
+                          step={0.05}
+                          onChange={(e) => onLoraStrengthChange(sel.name, 'clip', Number(e.target.value))}
+                          className="w-full"
+                        />
+                      </div>
+                    )}
                   </div>
-                )}
+                ))}
               </div>
             )}
           </div>

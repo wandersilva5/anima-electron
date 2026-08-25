@@ -23,9 +23,12 @@ export function useGenerator() {
       return
     }
 
-    if (params.loraName && loras.length > 0 && !loras.some((l) => l.name === params.loraName)) {
-      setError(`LoRA "${params.loraName}" não encontrado. Selecione um LoRA válido ou remova a seleção.`)
-      return
+    if (params.loras.length > 0 && loras.length > 0) {
+      const invalid = params.loras.find((l) => !loras.some((avail) => avail.name === l.name))
+      if (invalid) {
+        setError(`LoRA "${invalid.name}" não encontrado. Selecione LoRAs válidos ou remova a seleção.`)
+        return
+      }
     }
 
     generatingRef.current = true
@@ -41,9 +44,7 @@ export function useGenerator() {
       cfg: params.cfg,
       width: params.width,
       height: params.height,
-      loraName: params.loraName,
-      loraStrengthModel: params.loraStrengthModel,
-      loraStrengthClip: params.loraStrengthClip,
+      loras: params.loras,
       modelName: params.modelName,
       filenamePrefix: params.filenamePrefix
     }

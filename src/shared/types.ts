@@ -20,6 +20,16 @@ export interface ModelProfile {
   }
 }
 
+// Um LoRA selecionado com suas forças aplicadas
+export interface LoraSelection {
+  name: string
+  strengthModel: number
+  strengthClip: number
+}
+
+// Limite de LoRAs encadeados por geração (proteção contra payloads absurdos)
+export const MAX_LORAS = 10
+
 export interface GenerationParams {
   diffusionModel: DiffusionModelId
   prompt: string
@@ -29,9 +39,7 @@ export interface GenerationParams {
   cfg: number
   width: number
   height: number
-  loraName: string | null
-  loraStrengthModel: number
-  loraStrengthClip: number
+  loras: LoraSelection[]
   modelName: string
   filenamePrefix?: string
   imagePath?: string

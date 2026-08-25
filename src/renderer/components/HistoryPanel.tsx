@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import type { GenerationResult } from '@shared/types'
 import { Image, Clock, Trash2, X, CheckSquare, Square } from 'lucide-react'
+import { getSelectedLoras, loraDisplayName } from '../utils/loraParams'
 
 function HistoryItem({
   item,
@@ -86,13 +87,20 @@ function HistoryItem({
         </div>
       )}
 
-      {item.params.loraName && (
-        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
-          <span className="text-[10px] text-white/80 truncate block">
-            LoRA: {item.params.loraName.replace(/\.(safetensors|ckpt)$/, '').slice(0, 20)}
-          </span>
-        </div>
-      )}
+      {(() => {
+        const usedLoras = getSelectedLoras(item.params)
+        if (usedLoras.length === 0) return null
+        const label = usedLoras.length === 1
+          ? `LoRA: ${loraDisplayName(usedLoras[0].name).slice(0, 20)}`
+          : `${usedLoras.length} LoRAs: ${usedLoras.map((l) => loraDisplayName(l.name)).join(', ')}`
+        return (
+          <div className="absolute bottom-0 left-0 right-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
+            <span className="text-[10px] text-white/80 truncate block" title={label}>
+              {label}
+            </span>
+          </div>
+        )
+      })()}
 
       {!deleteMode && (
         <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
