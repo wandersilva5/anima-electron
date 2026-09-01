@@ -1,4 +1,4 @@
-import { app, nativeImage, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { nativeImage, app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join, dirname, normalize, resolve, sep } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync, statSync } from "fs";
 import { WebSocket } from "ws";
@@ -503,6 +503,7 @@ const MODEL_PROFILES = {
     label: "Krea2",
     description: "Krea2 Turbo — geração rápida, sem prompt negativo",
     workflowFile: "Krea2 - Simples.json",
+    poseWorkflowFile: "Krea2-Pose.json",
     loraFolder: "Krea2",
     hasNegativePrompt: false,
     hasLoraClipStrength: true,
@@ -1060,6 +1061,58 @@ class WorkflowManager {
     }
     return prompt;
   }
+  /**
+   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Pose.
+   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
+   *   image1 = personagem (identidade) → nó LoadImage id 4
+   *   image2 = referência de pose      → nó LoadImage id 5
+   * Não usa DWPose nem ControlNet.
+   */
+  buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath) {
+    const raw = readFileSync(poseWorkflowPath, "utf-8");
+    const workflow = JSON.parse(raw);
+    const controlAfterGenValues = /* @__PURE__ */ new Set(["randomize", "fixed", "increment", "decrement", "comfy"]);
+    const prompt = {};
+    for (const node of workflow.nodes) {
+      const inputs = {};
+      if (node.inputs) {
+        for (const inp of node.inputs) {
+          if (inp.link !== null && inp.link !== void 0) {
+            const link = workflow.links.find((l) => l[0] === inp.link);
+            if (link) {
+              inputs[inp.name] = [String(link[1]), link[2] ?? 0];
+            }
+          }
+        }
+      }
+      if (node.widgets_values && node.widgets_values.length > 0) {
+        const isKSampler = node.type === "KSampler" || node.type === "KSamplerAdvanced";
+        const widgetInputs = (node.inputs ?? []).filter(
+          (i) => (i.link === null || i.link === void 0) && i.shape !== 7
+        );
+        let wIdx = 0;
+        for (const val of node.widgets_values) {
+          if (wIdx >= widgetInputs.length) break;
+          if (isKSampler && typeof val === "string" && controlAfterGenValues.has(val)) continue;
+          inputs[widgetInputs[wIdx].name] = val;
+          wIdx++;
+        }
+      }
+      delete inputs["upload"];
+      prompt[String(node.id)] = {
+        class_type: node.type,
+        _meta: { title: node.title || node.type },
+        inputs
+      };
+    }
+    const charNode = prompt["4"];
+    if (charNode?.inputs) charNode.inputs["image"] = charFilename;
+    const poseNode = prompt["5"];
+    if (poseNode?.inputs) poseNode.inputs["image"] = poseFilename;
+    const ksamplerNode = prompt["9"];
+    if (ksamplerNode?.inputs) ksamplerNode.inputs["seed"] = seed;
+    return prompt;
+  }
 }
 function findPreview(filename, dir, extraBase) {
   const baseName = filename.replace(/\.(safetensors|ckpt|gguf)$/, "");
@@ -1175,6 +1228,9 @@ function getProjectDataDir() {
   const projectRoot = resolve(dirname(__dirname), "..");
   return join(projectRoot, "data");
 }
+function getSettingsFilePath() {
+  return join(getProjectDataDir(), "settings.json");
+}
 function detectComfyUIPath() {
   const candidates = [
     join(process.env.LOCALAPPDATA || "", "ComfyUI_windows_portable"),
@@ -1195,22 +1251,23 @@ const DEFAULTS = {
 };
 class SettingsManager {
   constructor() {
-    const dataDir = app.getPath("userData");
+    this.filePath = getSettingsFilePath();
+    const dataDir = getProjectDataDir();
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }
-    this.filePath = join(dataDir, "settings.json");
     this.migrateLegacySettings();
     this.settings = this.load();
   }
-  // Migração única: versões antigas gravavam em {projeto}/data/settings.json
+  // Migração única: versões antigas gravavam em %APPDATA%/anima-electron/settings.json
   migrateLegacySettings() {
     try {
       if (existsSync(this.filePath)) return;
-      const legacyPath = join(getProjectDataDir(), "settings.json");
+      const { app: app2 } = require2("electron");
+      const legacyPath = join(app2.getPath("userData"), "settings.json");
       if (!existsSync(legacyPath)) return;
       copyFileSync(legacyPath, this.filePath);
-      console.log("[Settings] Configurações antigas migradas para:", this.filePath);
+      console.log("[Settings] Configurações migradas de AppData para:", this.filePath);
     } catch (err) {
       console.warn("[Settings] Falha ao migrar configurações antigas:", err);
     }
@@ -1298,9 +1355,6 @@ let statusPollInterval = null;
 let statusPollActive = false;
 let statusPollOnline = false;
 function getHistoryBaseDir() {
-  return join(app.getPath("userData"), "history");
-}
-function getLegacyHistoryBaseDir() {
   const projectRoot = resolve(dirname(__dirname), "..");
   return join(projectRoot, "history");
 }
@@ -1308,11 +1362,12 @@ function migrateLegacyHistory() {
   try {
     const target = getHistoryBaseDir();
     if (existsSync(target)) return;
-    const legacy = getLegacyHistoryBaseDir();
-    if (!existsSync(legacy)) return;
+    const { app: app2 } = require2("electron");
+    const legacyAppData = join(app2.getPath("userData"), "history");
+    if (!existsSync(legacyAppData)) return;
     mkdirSync(target, { recursive: true });
-    for (const entry of readdirSync(legacy)) {
-      const src = join(legacy, entry);
+    for (const entry of readdirSync(legacyAppData)) {
+      const src = join(legacyAppData, entry);
       const dest = join(target, entry);
       if (statSync(src).isDirectory()) {
         mkdirSync(dest, { recursive: true });
@@ -1323,7 +1378,7 @@ function migrateLegacyHistory() {
         copyFileSync(src, dest);
       }
     }
-    console.log("[Anima] Histórico antigo migrado para:", target);
+    console.log("[Anima] Histórico migrado de AppData para:", target);
   } catch (err) {
     console.warn("[Anima] Falha ao migrar histórico antigo:", err);
   }
@@ -1696,6 +1751,73 @@ function setupIPC() {
       return { promptId: response.prompt_id, images: savedImages, warning: warnings.join(" ") || void 0 };
     } finally {
       removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir);
+    }
+  });
+  ipcMain.handle("comfyui:generatePose", async (event, rawParams) => {
+    requireMainWindow(event);
+    const p = rawParams && typeof rawParams === "object" ? rawParams : {};
+    const charImageBase64 = typeof p.charImageBase64 === "string" ? p.charImageBase64 : null;
+    const poseImageBase64 = typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : null;
+    const seed = typeof p.seed === "number" ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647);
+    const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-pose";
+    if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
+    if (!poseImageBase64) throw new Error("Imagem de pose não fornecida");
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile;
+    if (!poseWorkflowFile) {
+      throw new Error("Perfil krea2 não define poseWorkflowFile");
+    }
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile);
+    if (!existsSync(poseWorkflowPath)) {
+      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`);
+    }
+    const settings2 = settingsManager.get();
+    const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const baseUrl = comfyClient.getBaseUrl();
+    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/);
+    const charExt = charMatch ? charMatch[1] === "jpeg" ? "jpg" : charMatch[1] : "png";
+    const charFilename = `anima-pose-char-${Date.now()}.${charExt}`;
+    const poseMatch = poseImageBase64.match(/^data:image\/(\w+);base64,/);
+    const poseExt = poseMatch ? poseMatch[1] === "jpeg" ? "jpg" : poseMatch[1] : "png";
+    const poseFilename = `anima-pose-ref-${Date.now()}.${poseExt}`;
+    await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl);
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl);
+    console.log("[Anima] Pose: personagem=%s, referência=%s", charFilename, poseFilename);
+    try {
+      const prompt = workflowManager.buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath);
+      console.log("[Anima] Pose prompt construído, nós:", Object.keys(prompt).length);
+      const readNumInput = (nodeId, inputName, fallback) => {
+        const node = prompt[nodeId];
+        const val = node?.inputs?.[inputName];
+        return typeof val === "number" ? val : fallback;
+      };
+      const poseParams = {
+        diffusionModel: "krea2",
+        prompt: "",
+        negativePrompt: "",
+        seed,
+        steps: readNumInput("9", "steps", 12),
+        cfg: readNumInput("9", "cfg", 2.5),
+        width: readNumInput("8", "width", 1024),
+        height: readNumInput("8", "height", 1024),
+        loras: [],
+        modelName: ""
+      };
+      const response = await comfyClient.sendPrompt(prompt);
+      console.log("[Anima] Pose prompt enviado, ID:", response.prompt_id);
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
+      }
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+        }
+      );
+      console.log(`[Anima] Pose concluída, ${images.length} imagem(ns)`);
+      const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams, filenamePrefix);
+      return { promptId: response.prompt_id, images: savedImages };
+    } finally {
+      removeTempFiles([charFilename, poseFilename], comfyInputDir);
     }
   });
   ipcMain.handle("comfyui:captionImage", async (event, params) => {

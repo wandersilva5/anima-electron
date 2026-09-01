@@ -1,17 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Play, Sparkles, Clock } from 'lucide-react'
-import { MODEL_PROFILES } from '@shared/modelProfiles'
-import type { DiffusionModelId, GenerationResult } from '@shared/types'
+import { Upload, Wand2, Trash2, Play, Clock } from 'lucide-react'
+import type { GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
-import { renderOpenPose, type Joints } from '../utils/openposeRenderer'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
-import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
-import { useLoraSelection } from '../hooks/useLoraSelection'
-
-const POSE_CANVAS = { width: 512, height: 1536 }
-
-const DEFAULT_POSE_PROMPT = 'masterpiece, best quality, amazing quality, very aesthetic, same character, same outfit, highly detailed'
 
 interface DropPanelProps {
   title: string
@@ -24,10 +16,9 @@ interface DropPanelProps {
   inputRef: React.RefObject<HTMLInputElement>
   badge?: string
   badgeClass?: string
-  footer?: React.ReactNode
 }
 
-function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, inputRef, badge, badgeClass, footer }: DropPanelProps) {
+function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, inputRef, badge, badgeClass }: DropPanelProps) {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     onDragOver(false)
@@ -113,8 +104,6 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
           </div>
         </div>
       )}
-
-      {footer}
     </div>
   )
 }
@@ -122,16 +111,7 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
 export function PoseStudio() {
   const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
 
-  const selectedModel: DiffusionModelId = 'anima'
-  const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
-  const { selectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection()
-  const [denoise, setDenoise] = useState(0.9)
-  const [captioning, setCaptioning] = useState(false)
-  const [charPrompt, setCharPrompt] = useState('')
-
   const [poseSrc, setPoseSrc] = useState<string | null>(null)
-  const [poseJoints, setPoseJoints] = useState<Record<string, [number, number]> | null>(null)
-  const [detectingPose, setDetectingPose] = useState(false)
   const [charSrc, setCharSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
 
@@ -142,16 +122,16 @@ export function PoseStudio() {
   const [dragOverChar, setDragOverChar] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
+  // ModelSidebar state — não usado na geração de pose (Krea2-Pose tem modelo fixo no workflow)
+  // mas mantemos para consistência visual
+  const [selectedCheckpoint] = useState('')
+  const selectedLoras: import('@shared/types').LoraSelection[] = []
+
   const poseInputRef = useRef<HTMLInputElement>(null)
   const charInputRef = useRef<HTMLInputElement>(null)
 
-  const profile = MODEL_PROFILES[selectedModel]
-
-  useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
-
   useEffect(() => {
-    clearLoras()
-    const folder = MODEL_PROFILES['anima'].loraFolder
+    const folder = 'Krea2'
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setLoras(newLoras)
     }).catch(() => {})
@@ -167,7 +147,6 @@ export function PoseStudio() {
     const apply = (src: string) => {
       setCharSrc(src)
       setResultSrc(null)
-      setCharPrompt('')
       setError(null)
     }
     if (picked.imageBase64) {
@@ -179,37 +158,16 @@ export function PoseStudio() {
     }
   }, [pendingPick, requestHistoryPick])
 
-  const detectPose = useCallback(async (src: string): Promise<Record<string, [number, number]> | null> => {
-    setDetectingPose(true)
-    setError(null)
-    try {
-      const joints = await window.electronAPI.pose.extractFromBase64(src)
-      if (!joints) {
-        setError('Não foi possível detectar uma pose na imagem. Verifique se o modelo DWPose está baixado e tente outra imagem.')
-        return null
-      }
-      setPoseJoints(joints)
-      return joints
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao detectar pose da imagem')
-      return null
-    } finally {
-      setDetectingPose(false)
-    }
-  }, [])
-
   const handlePoseFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
     const reader = new FileReader()
-    reader.onload = async (e) => {
-      const src = e.target?.result as string
-      setPoseSrc(src)
-      setPoseJoints(null)
+    reader.onload = (e) => {
+      setPoseSrc(e.target?.result as string)
       setResultSrc(null)
-      await detectPose(src)
+      setError(null)
     }
     reader.readAsDataURL(file)
-  }, [detectPose])
+  }, [])
 
   const handleCharFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -217,7 +175,6 @@ export function PoseStudio() {
     reader.onload = (e) => {
       setCharSrc(e.target?.result as string)
       setResultSrc(null)
-      setCharPrompt('')
       setError(null)
     }
     reader.readAsDataURL(file)
@@ -225,7 +182,6 @@ export function PoseStudio() {
 
   const clearPose = useCallback(() => {
     setPoseSrc(null)
-    setPoseJoints(null)
     setResultSrc(null)
     if (poseInputRef.current) poseInputRef.current.value = ''
   }, [])
@@ -233,46 +189,11 @@ export function PoseStudio() {
   const clearChar = useCallback(() => {
     setCharSrc(null)
     setResultSrc(null)
-    setCharPrompt('')
     if (charInputRef.current) charInputRef.current.value = ''
-  }, [])
-
-  const renderPoseToCharCanvas = useCallback(async (joints: Joints, charSrcData: string): Promise<string | null> => {
-    try {
-      const dims = await new Promise<{ width: number; height: number } | null>((resolve) => {
-        const img = new Image()
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
-        img.onerror = () => resolve(null)
-        img.src = charSrcData
-      })
-      if (!dims) return null
-      const w = Math.max(64, Math.round(dims.width / 8) * 8)
-      const h = Math.max(64, Math.round(dims.height / 8) * 8)
-      const canvas = renderOpenPose(joints, w, h, 3)
-      return canvas.toDataURL('image/png')
-    } catch (err) {
-      console.warn('[Anima] Falha ao renderizar pose:', err)
-      return null
-    }
   }, [])
 
   const handleGenerate = useCallback(async () => {
     if (!poseSrc || !charSrc) return
-
-    let effectivePrompt = charPrompt.trim()
-    if (!effectivePrompt) {
-      setCaptioning(true)
-      setError(null)
-      try {
-        const cap = await window.electronAPI.comfyui.captionImage({ imageBase64: charSrc })
-        effectivePrompt = (cap.text || '').trim() || DEFAULT_POSE_PROMPT
-        setCharPrompt(effectivePrompt)
-      } catch {
-        effectivePrompt = DEFAULT_POSE_PROMPT
-      } finally {
-        setCaptioning(false)
-      }
-    }
 
     setGenerating(true)
     setError(null)
@@ -282,38 +203,12 @@ export function PoseStudio() {
     const stopProgress = startProgress()
 
     try {
-      const extracted = poseJoints ?? await detectPose(poseSrc)
-      if (!extracted) {
-        setError('Detecte a pose da imagem antes de gerar.')
-        return
-      }
-
-      const poseData = {
-        canvas: { width: POSE_CANVAS.width, height: POSE_CANVAS.height },
-        poses: [{ joints: extracted }]
-      }
-
-      const poseImageBase64 = await renderPoseToCharCanvas(extracted, charSrc)
       const seed = Math.floor(Math.random() * 2147483647)
-
-      const result = await window.electronAPI.comfyui.generateImprove({
-        diffusionModel: selectedModel,
-        prompt: effectivePrompt,
-        negativePrompt: '',
+      const result = await window.electronAPI.comfyui.generatePose({
+        charImageBase64: charSrc,
+        poseImageBase64: poseSrc,
         seed,
-        steps: profile.defaults.steps,
-        cfg: profile.defaults.cfg,
-        width: profile.defaults.width,
-        height: profile.defaults.height,
-        modelName: selectedCheckpoint,
-        loras: selectedLoras,
-        imageBase64: charSrc,
-        denoise,
-        filenamePrefix: 'anima-pose',
-        poseData: JSON.stringify(poseData),
-        poseImageBase64,
-        lineThickness: 3,
-        safeZone: 100
+        filenamePrefix: 'anima-pose'
       })
 
       const image = result.images?.[0]
@@ -327,14 +222,14 @@ export function PoseStudio() {
           filePath: image.filePath,
           filename: image.filename,
           params: {
-            diffusionModel: selectedModel,
-            prompt: effectivePrompt,
+            diffusionModel: 'krea2',
+            prompt: '',
             negativePrompt: '',
             seed,
-            steps: profile.defaults.steps,
-            cfg: profile.defaults.cfg,
-            width: profile.defaults.width,
-            height: profile.defaults.height,
+            steps: 8,
+            cfg: 1,
+            width: 1024,
+            height: 1024,
             modelName: selectedCheckpoint,
             loras: selectedLoras,
           },
@@ -348,7 +243,7 @@ export function PoseStudio() {
       stopProgress()
       setGenerating(false)
     }
-  }, [poseSrc, poseJoints, charSrc, charPrompt, selectedCheckpoint, selectedLoras, denoise, profile, detectPose, renderPoseToCharCanvas, startProgress, addToHistory])
+  }, [poseSrc, charSrc, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -356,26 +251,18 @@ export function PoseStudio() {
         <div className="w-full max-w-5xl flex flex-col items-center gap-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
             <DropPanel
-              title="1. Pose"
-              hint="Arraste ou selecione a pose desejada"
+              title="1. Pose de Referência"
+              hint="Arraste ou selecione a imagem com a pose desejada"
               src={poseSrc}
               dragOver={dragOverPose}
               onDragOver={setDragOverPose}
               onFile={handlePoseFile}
               onClear={clearPose}
               inputRef={poseInputRef}
-              badge={poseJoints ? 'Pose detectada' : detectingPose ? 'Detectando...' : undefined}
-              badgeClass={poseJoints ? 'bg-success/20 text-success' : 'bg-accent/20 text-accent'}
-              footer={detectingPose && (
-                <div className="flex items-center justify-center gap-1.5 text-[10px] text-text-muted">
-                  <div className="w-2.5 h-2.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-                  Extraindo pose via DWPose...
-                </div>
-              )}
             />
 
             <DropPanel
-              title="2. Personagem"
+              title="2. Personagem (identidade)"
               hint="Arraste ou selecione a imagem da personagem"
               src={charSrc}
               dragOver={dragOverChar}
@@ -432,6 +319,13 @@ export function PoseStudio() {
               {warning}
             </div>
           )}
+
+          <div className="w-full p-3 rounded-lg bg-accent/5 border border-accent/20 text-xs text-text-secondary flex items-start gap-2">
+            <span className="text-accent shrink-0 mt-0.5">ℹ</span>
+            <span>
+              O modelo <strong className="text-text-primary">Krea2</strong> transfere a pose diretamente por referência visual — sem necessidade de extração de esqueleto. Basta fornecer as duas imagens.
+            </span>
+          </div>
         </div>
       </main>
 
@@ -439,81 +333,29 @@ export function PoseStudio() {
         <div className="flex flex-col h-full">
           <div className="p-4 space-y-4 overflow-y-auto">
             <ModelSidebar
-              diffusionModel={selectedModel}
+              diffusionModel="krea2"
               onDiffusionModelChange={() => {}}
               hideDiffusionSelector
               modelName={selectedCheckpoint}
-              onModelChange={setSelectedCheckpoint}
+              onModelChange={() => {}}
               models={models}
               loras={loras}
               selectedLoras={selectedLoras}
-              onToggleLora={toggleLora}
-              onClearLoras={clearLoras}
-              onLoraStrengthChange={setLoraStrength}
+              onToggleLora={() => {}}
+              onClearLoras={() => {}}
+              onLoraStrengthChange={() => {}}
               refreshLorasFn={refreshLoras}
             />
 
-            {/* Descrição automática da personagem */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-medium text-text-secondary">
-                  Descrição da Personagem
-                </label>
-                {captioning && (
-                  <span className="flex items-center gap-1 text-[10px] text-accent">
-                    <div className="w-2.5 h-2.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-                    Extraindo...
-                  </span>
-                )}
-              </div>
-              <textarea
-                value={charPrompt}
-                readOnly
-                rows={3}
-                placeholder={charSrc ? 'Será extraída automaticamente ao gerar.' : 'Faça upload da personagem primeiro.'}
-                className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none"
-              />
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <Sparkles size={10} className="text-accent shrink-0" />
-                <span className="text-[10px] text-text-muted">
-                  Descrição extraída automaticamente para preservar a personagem.
-                </span>
-              </div>
-            </div>
-
-            {/* Denoise */}
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-text-secondary">Fidelidade à Personagem</label>
-                <span className="text-xs text-text-secondary font-mono">{denoise.toFixed(2)}</span>
-              </div>
-              <input
-                type="range"
-                value={denoise}
-                min={0.1}
-                max={1}
-                step={0.05}
-                onChange={(e) => setDenoise(Number(e.target.value))}
-                className="w-full mt-1"
-                disabled={!charSrc || generating}
-              />
-              <div className="flex justify-between text-[10px] text-text-muted mt-0.5">
-                <span>Manter original</span>
-                <span>Totalmente nova</span>
-              </div>
+            <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
+              <p className="font-medium text-text-secondary">Como funciona:</p>
+              <p>1. A <strong className="text-text-primary">Pose de Referência</strong> define a postura e ângulo do corpo.</p>
+              <p>2. O <strong className="text-text-primary">Personagem</strong> define a identidade, rosto e roupa a preservar.</p>
+              <p>3. O Krea2 combina os dois para gerar o resultado final.</p>
             </div>
           </div>
 
           <div className="mt-auto p-4 border-t border-border space-y-3">
-            {resultSrc && (
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 border border-success/20">
-                <Sparkles size={14} className="text-success shrink-0" />
-                <span className="text-xs text-text-primary">
-                  Personagem recriada com a pose!
-                </span>
-              </div>
-            )}
-
             {generating && (
               <div className="space-y-2">
                 {progress ? (
@@ -552,22 +394,17 @@ export function PoseStudio() {
 
             <button
               onClick={handleGenerate}
-              disabled={!poseSrc || !charSrc || captioning || generating || !status.online}
+              disabled={!poseSrc || !charSrc || generating || !status.online}
               className={`
                 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium text-sm
                 transition-all duration-200
-                ${(!poseSrc || !charSrc || captioning || generating || !status.online)
+                ${(!poseSrc || !charSrc || generating || !status.online)
                   ? 'bg-accent-muted text-text-muted cursor-not-allowed'
                   : 'bg-accent text-white hover:bg-accent-hover active:scale-[0.98] shadow-lg shadow-accent/20'
                 }
               `}
             >
-              {captioning ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Extraindo descrição...
-                </>
-              ) : generating ? (
+              {generating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Gerando...

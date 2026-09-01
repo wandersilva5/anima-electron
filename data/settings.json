@@ -1,5 +1,6 @@
 {
   "comfyUIPath": "D:\\ComfyUI_windows_portable",
   "modelsPath": "D:\\ComfyUI_windows_portable\\ComfyUI\\models",
-  "lorasPath": "D:\\ComfyUI_windows_portable\\ComfyUI\\models\\loras"
+  "lorasPath": "D:\\ComfyUI_windows_portable\\ComfyUI\\models\\loras",
+  "comfyUrl": "http://127.0.0.1:8188"
 }

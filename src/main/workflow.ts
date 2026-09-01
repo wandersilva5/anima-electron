@@ -653,4 +653,83 @@ export class WorkflowManager {
 
     return prompt
   }
+
+  /**
+   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Pose.
+   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
+   *   image1 = personagem (identidade) → nó LoadImage id 4
+   *   image2 = referência de pose      → nó LoadImage id 5
+   * Não usa DWPose nem ControlNet.
+   */
+  buildPosePrompt(
+    charFilename: string,
+    poseFilename: string,
+    seed: number,
+    poseWorkflowPath: string
+  ): Record<string, unknown> {
+    const raw = readFileSync(poseWorkflowPath, 'utf-8')
+    const workflow: WorkflowJSON = JSON.parse(raw)
+    const controlAfterGenValues = new Set(['randomize', 'fixed', 'increment', 'decrement', 'comfy'])
+
+    // Converte formato UI → formato API do ComfyUI
+    const prompt: Record<string, unknown> = {}
+    for (const node of workflow.nodes) {
+      const inputs: Record<string, unknown> = {}
+
+      // Inputs conectados via links
+      if (node.inputs) {
+        for (const inp of node.inputs) {
+          if (inp.link !== null && inp.link !== undefined) {
+            const link = workflow.links.find((l) => l[0] === inp.link)
+            if (link) {
+              inputs[inp.name] = [String(link[1]), link[2] ?? 0]
+            }
+          }
+        }
+      }
+
+      // Widget values: apenas inputs sem link (widgets)
+      // KSampler UI export inclui control_after_generate (valor como "randomize",
+      // "fixed") que não é um input da API — precisa ser pulado para não deslocar
+      // os demais valores (steps, cfg, sampler_name, etc.).
+      // Inputs com shape=7 (optional/hidden) também são pulados pois não possuem
+      // widget values correspondentes no export da UI.
+      if (node.widgets_values && node.widgets_values.length > 0) {
+        const isKSampler = node.type === 'KSampler' || node.type === 'KSamplerAdvanced'
+        const widgetInputs = (node.inputs ?? []).filter(
+          (i) => (i.link === null || i.link === undefined) && i.shape !== 7
+        )
+        let wIdx = 0
+        for (const val of node.widgets_values) {
+          if (wIdx >= widgetInputs.length) break
+          // No KSampler, pula control_after_generate (UI-only widget)
+          if (isKSampler && typeof val === 'string' && controlAfterGenValues.has(val)) continue
+          inputs[widgetInputs[wIdx].name] = val
+          wIdx++
+        }
+      }
+
+      // Remove inputs que só existem na UI (não fazem parte da API do ComfyUI)
+      delete inputs['upload'] // widget IMAGEUPLOAD do LoadImage
+
+      prompt[String(node.id)] = {
+        class_type: node.type,
+        _meta: { title: (node as any).title || node.type },
+        inputs
+      }
+    }
+
+    // Substitui filenames nos LoadImage
+    const charNode = prompt['4'] as { inputs: Record<string, unknown> } | undefined
+    if (charNode?.inputs) charNode.inputs['image'] = charFilename
+
+    const poseNode = prompt['5'] as { inputs: Record<string, unknown> } | undefined
+    if (poseNode?.inputs) poseNode.inputs['image'] = poseFilename
+
+    // Substitui semente no KSampler (nó 9)
+    const ksamplerNode = prompt['9'] as { inputs: Record<string, unknown> } | undefined
+    if (ksamplerNode?.inputs) ksamplerNode.inputs['seed'] = seed
+
+    return prompt
+  }
 }

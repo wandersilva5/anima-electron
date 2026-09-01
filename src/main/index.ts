@@ -24,25 +24,22 @@ let statusPollActive = false
 let statusPollOnline = false
 
 function getHistoryBaseDir(): string {
-  return join(app.getPath('userData'), 'history')
-}
-
-function getLegacyHistoryBaseDir(): string {
   const projectRoot = resolve(dirname(__dirname), '..')
   return join(projectRoot, 'history')
 }
 
-// Migração única: versões antigas gravavam o histórico em {projeto}/history
+// Migração única: versões antigas gravavam o histórico em %APPDATA%/anima-electron/history
 function migrateLegacyHistory(): void {
   try {
     const target = getHistoryBaseDir()
     if (existsSync(target)) return
-    const legacy = getLegacyHistoryBaseDir()
-    if (!existsSync(legacy)) return
+    const { app } = require('electron')
+    const legacyAppData = join(app.getPath('userData'), 'history')
+    if (!existsSync(legacyAppData)) return
 
     mkdirSync(target, { recursive: true })
-    for (const entry of readdirSync(legacy)) {
-      const src = join(legacy, entry)
+    for (const entry of readdirSync(legacyAppData)) {
+      const src = join(legacyAppData, entry)
       const dest = join(target, entry)
       if (statSync(src).isDirectory()) {
         mkdirSync(dest, { recursive: true })
@@ -53,7 +50,7 @@ function migrateLegacyHistory(): void {
         copyFileSync(src, dest)
       }
     }
-    console.log('[Anima] Histórico antigo migrado para:', target)
+    console.log('[Anima] Histórico migrado de AppData para:', target)
   } catch (err) {
     console.warn('[Anima] Falha ao migrar histórico antigo:', err)
   }
@@ -500,6 +497,88 @@ function setupIPC(): void {
     } finally {
       // Remove arquivos temporários enviados ao ComfyUI para não acumular em input/
       removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir)
+    }
+  })
+
+  ipcMain.handle('comfyui:generatePose', async (event, rawParams) => {
+    requireMainWindow(event)
+
+    const p = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>
+    const charImageBase64 = typeof p.charImageBase64 === 'string' ? p.charImageBase64 : null
+    const poseImageBase64 = typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : null
+    const seed = typeof p.seed === 'number' ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647)
+    const filenamePrefix = typeof p.filenamePrefix === 'string' ? p.filenamePrefix : 'anima-pose'
+
+    if (!charImageBase64) throw new Error('Imagem da personagem não fornecida')
+    if (!poseImageBase64) throw new Error('Imagem de pose não fornecida')
+
+    // Resolve o caminho do workflow de pose via profile (mesma resolução do WorkflowManager)
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile
+    if (!poseWorkflowFile) {
+      throw new Error('Perfil krea2 não define poseWorkflowFile')
+    }
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile)
+    if (!existsSync(poseWorkflowPath)) {
+      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`)
+    }
+
+    const settings = settingsManager.get()
+    const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+    const baseUrl = comfyClient.getBaseUrl()
+
+    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/)
+    const charExt = charMatch ? (charMatch[1] === 'jpeg' ? 'jpg' : charMatch[1]) : 'png'
+    const charFilename = `anima-pose-char-${Date.now()}.${charExt}`
+
+    const poseMatch = poseImageBase64.match(/^data:image\/(\w+);base64,/)
+    const poseExt = poseMatch ? (poseMatch[1] === 'jpeg' ? 'jpg' : poseMatch[1]) : 'png'
+    const poseFilename = `anima-pose-ref-${Date.now()}.${poseExt}`
+
+    await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl)
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl)
+    console.log('[Anima] Pose: personagem=%s, referência=%s', charFilename, poseFilename)
+
+    try {
+      const prompt = workflowManager.buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath)
+      console.log('[Anima] Pose prompt construído, nós:', Object.keys(prompt).length)
+
+      // Extrai steps/cfg/dimensões reais do workflow para o histórico
+      const readNumInput = (nodeId: string, inputName: string, fallback: number): number => {
+        const node = prompt[nodeId] as { inputs?: Record<string, unknown> } | undefined
+        const val = node?.inputs?.[inputName]
+        return typeof val === 'number' ? val : fallback
+      }
+      const poseParams = {
+        diffusionModel: 'krea2' as DiffusionModelId,
+        prompt: '',
+        negativePrompt: '',
+        seed,
+        steps: readNumInput('9', 'steps', 12),
+        cfg: readNumInput('9', 'cfg', 2.5),
+        width: readNumInput('8', 'width', 1024),
+        height: readNumInput('8', 'height', 1024),
+        loras: [],
+        modelName: ''
+      }
+
+      const response = await comfyClient.sendPrompt(prompt)
+      console.log('[Anima] Pose prompt enviado, ID:', response.prompt_id)
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+      }
+
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+        }
+      )
+      console.log(`[Anima] Pose concluída, ${images.length} imagem(ns)`)
+
+      const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams as unknown as Record<string, unknown>, filenamePrefix)
+      return { promptId: response.prompt_id, images: savedImages }
+    } finally {
+      removeTempFiles([charFilename, poseFilename], comfyInputDir)
     }
   })
 

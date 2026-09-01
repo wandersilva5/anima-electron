@@ -7,6 +7,8 @@ export interface ModelProfile {
   label: string
   description: string
   workflowFile: string
+  /** Workflow alternativo usado pela aba POSE (transferência de pose por referência visual) */
+  poseWorkflowFile?: string
   loraFolder: string
   hasNegativePrompt: boolean
   hasLoraClipStrength: boolean
@@ -18,6 +20,15 @@ export interface ModelProfile {
     sampler: string
     scheduler: string
   }
+}
+
+/** Parâmetros para geração de pose via workflow dedicado (sem DWPose) */
+export interface PoseGenerationParams {
+  charImageBase64: string      // Imagem da personagem (identidade)
+  poseImageBase64: string      // Imagem de referência de pose
+  seed?: number
+  filenamePrefix?: string
+  modelName?: string           // Checkpoint opcional
 }
 
 // Um LoRA selecionado com suas forças aplicadas
@@ -88,7 +99,7 @@ export interface WorkflowNode {
   color?: string
   bgcolor?: string
   widgets_values?: unknown[]
-  inputs?: { name: string; link: number | null }[]
+  inputs?: { name: string; link: number | null; shape?: number }[]
   outputs?: { name: string; links?: (number | null)[] }[]
 }
 

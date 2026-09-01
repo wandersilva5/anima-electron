@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'fs'
 import { join, resolve, dirname } from 'path'
-import { app } from 'electron'
 import type { AppSettings } from '@shared/types'
 
 const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188'
@@ -8,6 +7,10 @@ const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188'
 function getProjectDataDir(): string {
   const projectRoot = resolve(dirname(__dirname), '..')
   return join(projectRoot, 'data')
+}
+
+function getSettingsFilePath(): string {
+  return join(getProjectDataDir(), 'settings.json')
 }
 
 function detectComfyUIPath(): string {
@@ -35,23 +38,24 @@ export class SettingsManager {
   private filePath: string
 
   constructor() {
-    const dataDir = app.getPath('userData')
+    this.filePath = getSettingsFilePath()
+    const dataDir = getProjectDataDir()
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true })
     }
-    this.filePath = join(dataDir, 'settings.json')
     this.migrateLegacySettings()
     this.settings = this.load()
   }
 
-  // Migração única: versões antigas gravavam em {projeto}/data/settings.json
+  // Migração única: versões antigas gravavam em %APPDATA%/anima-electron/settings.json
   private migrateLegacySettings(): void {
     try {
       if (existsSync(this.filePath)) return
-      const legacyPath = join(getProjectDataDir(), 'settings.json')
+      const { app } = require('electron')
+      const legacyPath = join(app.getPath('userData'), 'settings.json')
       if (!existsSync(legacyPath)) return
       copyFileSync(legacyPath, this.filePath)
-      console.log('[Settings] Configurações antigas migradas para:', this.filePath)
+      console.log('[Settings] Configurações migradas de AppData para:', this.filePath)
     } catch (err) {
       console.warn('[Settings] Falha ao migrar configurações antigas:', err)
     }

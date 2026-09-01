@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getStatus: () => ipcRenderer.invoke("comfyui:status"),
     generate: (params) => ipcRenderer.invoke("comfyui:generate", params),
     generateImprove: (params) => ipcRenderer.invoke("comfyui:generateImprove", params),
+    generatePose: (params) => ipcRenderer.invoke("comfyui:generatePose", params),
     captionImage: (params) => ipcRenderer.invoke("comfyui:captionImage", params),
     clearCache: () => ipcRenderer.invoke("comfyui:clearCache"),
     setUrl: (url) => ipcRenderer.invoke("comfyui:setUrl", url),
