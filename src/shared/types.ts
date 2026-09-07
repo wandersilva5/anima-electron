@@ -9,6 +9,8 @@ export interface ModelProfile {
   workflowFile: string
   /** Workflow alternativo usado pela aba POSE (transferência de pose por referência visual) */
   poseWorkflowFile?: string
+  /** Workflow alternativo usado pela aba ROUPA (transferência de roupa por referência visual) */
+  outfitWorkflowFile?: string
   loraFolder: string
   hasNegativePrompt: boolean
   hasLoraClipStrength: boolean
@@ -26,6 +28,15 @@ export interface ModelProfile {
 export interface PoseGenerationParams {
   charImageBase64: string      // Imagem da personagem (identidade)
   poseImageBase64: string      // Imagem de referência de pose
+  seed?: number
+  filenamePrefix?: string
+  modelName?: string           // Checkpoint opcional
+}
+
+/** Parâmetros para transferência de roupa via workflow dedicado (Krea2-Outfit) */
+export interface OutfitGenerationParams {
+  charImageBase64: string      // Imagem da personagem (identidade + pose a manter)
+  outfitImageBase64: string    // Imagem de referência da roupa de outro personagem
   seed?: number
   filenamePrefix?: string
   modelName?: string           // Checkpoint opcional

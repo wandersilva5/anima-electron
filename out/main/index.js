@@ -504,6 +504,7 @@ const MODEL_PROFILES = {
     description: "Krea2 Turbo — geração rápida, sem prompt negativo",
     workflowFile: "Krea2 - Simples.json",
     poseWorkflowFile: "Krea2-Pose.json",
+    outfitWorkflowFile: "Krea2-Outfit.json",
     loraFolder: "Krea2",
     hasNegativePrompt: false,
     hasLoraClipStrength: true,
@@ -1069,7 +1070,24 @@ class WorkflowManager {
    * Não usa DWPose nem ControlNet.
    */
   buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath) {
-    const raw = readFileSync(poseWorkflowPath, "utf-8");
+    return this.buildTwoImagePrompt(poseWorkflowPath, charFilename, poseFilename, seed);
+  }
+  /**
+   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
+   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
+   *   image1 = personagem (identidade)   → nó LoadImage id 4
+   *   image2 = referência de roupa       → nó LoadImage id 5
+   * Mantém identidade e pose da imagem 1, transfere apenas a roupa da imagem 2.
+   */
+  buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath) {
+    return this.buildTwoImagePrompt(outfitWorkflowPath, charFilename, outfitFilename, seed);
+  }
+  /**
+   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Pose/Krea2-Outfit).
+   * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
+   */
+  buildTwoImagePrompt(workflowPath, image1Filename, image2Filename, seed) {
+    const raw = readFileSync(workflowPath, "utf-8");
     const workflow = JSON.parse(raw);
     const controlAfterGenValues = /* @__PURE__ */ new Set(["randomize", "fixed", "increment", "decrement", "comfy"]);
     const prompt = {};
@@ -1106,9 +1124,9 @@ class WorkflowManager {
       };
     }
     const charNode = prompt["4"];
-    if (charNode?.inputs) charNode.inputs["image"] = charFilename;
-    const poseNode = prompt["5"];
-    if (poseNode?.inputs) poseNode.inputs["image"] = poseFilename;
+    if (charNode?.inputs) charNode.inputs["image"] = image1Filename;
+    const refNode = prompt["5"];
+    if (refNode?.inputs) refNode.inputs["image"] = image2Filename;
     const ksamplerNode = prompt["9"];
     if (ksamplerNode?.inputs) ksamplerNode.inputs["seed"] = seed;
     return prompt;
@@ -1392,6 +1410,30 @@ function getImageExt(filename) {
   if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) return "jpg";
   return "png";
 }
+const HISTORY_PARAM_BLOCKLIST = /* @__PURE__ */ new Set([
+  "imageBase64",
+  "maskBase64",
+  "poseImageBase64",
+  "poseData",
+  "imagePath",
+  "maskFilename",
+  "poseImageFilename"
+]);
+const HISTORY_PARAM_MAX_STRING = 100 * 1024;
+function sanitizeHistoryParams(params) {
+  const clean = {};
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (HISTORY_PARAM_BLOCKLIST.has(key)) continue;
+    if (typeof value === "string" && value.length > HISTORY_PARAM_MAX_STRING) continue;
+    clean[key] = value;
+  }
+  return clean;
+}
+function historyParamsHasBloat(params) {
+  return Object.entries(params ?? {}).some(
+    ([key, value]) => HISTORY_PARAM_BLOCKLIST.has(key) || typeof value === "string" && value.length > HISTORY_PARAM_MAX_STRING
+  );
+}
 function saveImagesToHistory(promptId, images, params, prefix = "anima") {
   const historyBaseDir = getHistoryBaseDir();
   const historyDir = join(historyBaseDir, promptId);
@@ -1405,7 +1447,7 @@ function saveImagesToHistory(promptId, images, params, prefix = "anima") {
       mkdirSync(historyDir, { recursive: true });
     }
     const metadata = {
-      params,
+      params: sanitizeHistoryParams(params),
       timestamp: Date.now(),
       images: []
     };
@@ -1820,6 +1862,73 @@ function setupIPC() {
       removeTempFiles([charFilename, poseFilename], comfyInputDir);
     }
   });
+  ipcMain.handle("comfyui:generateOutfit", async (event, rawParams) => {
+    requireMainWindow(event);
+    const p = rawParams && typeof rawParams === "object" ? rawParams : {};
+    const charImageBase64 = typeof p.charImageBase64 === "string" ? p.charImageBase64 : null;
+    const outfitImageBase64 = typeof p.outfitImageBase64 === "string" ? p.outfitImageBase64 : null;
+    const seed = typeof p.seed === "number" ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647);
+    const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-outfit";
+    if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
+    if (!outfitImageBase64) throw new Error("Imagem de roupa não fornecida");
+    const outfitWorkflowFile = MODEL_PROFILES.krea2.outfitWorkflowFile;
+    if (!outfitWorkflowFile) {
+      throw new Error("Perfil krea2 não define outfitWorkflowFile");
+    }
+    const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile);
+    if (!existsSync(outfitWorkflowPath)) {
+      throw new Error(`Workflow de roupa não encontrado: ${outfitWorkflowPath}`);
+    }
+    const settings2 = settingsManager.get();
+    const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const baseUrl = comfyClient.getBaseUrl();
+    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/);
+    const charExt = charMatch ? charMatch[1] === "jpeg" ? "jpg" : charMatch[1] : "png";
+    const charFilename = `anima-outfit-char-${Date.now()}.${charExt}`;
+    const outfitMatch = outfitImageBase64.match(/^data:image\/(\w+);base64,/);
+    const outfitExt = outfitMatch ? outfitMatch[1] === "jpeg" ? "jpg" : outfitMatch[1] : "png";
+    const outfitFilename = `anima-outfit-ref-${Date.now()}.${outfitExt}`;
+    await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl);
+    await uploadImageToComfyUI(outfitImageBase64, outfitFilename, comfyInputDir, baseUrl);
+    console.log("[Anima] Outfit: personagem=%s, referência=%s", charFilename, outfitFilename);
+    try {
+      const prompt = workflowManager.buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath);
+      console.log("[Anima] Outfit prompt construído, nós:", Object.keys(prompt).length);
+      const readNumInput = (nodeId, inputName, fallback) => {
+        const node = prompt[nodeId];
+        const val = node?.inputs?.[inputName];
+        return typeof val === "number" ? val : fallback;
+      };
+      const outfitParams = {
+        diffusionModel: "krea2",
+        prompt: "",
+        negativePrompt: "",
+        seed,
+        steps: readNumInput("9", "steps", 12),
+        cfg: readNumInput("9", "cfg", 2.5),
+        width: readNumInput("8", "width", 1024),
+        height: readNumInput("8", "height", 1024),
+        loras: [],
+        modelName: ""
+      };
+      const response = await comfyClient.sendPrompt(prompt);
+      console.log("[Anima] Outfit prompt enviado, ID:", response.prompt_id);
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
+      }
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+        }
+      );
+      console.log(`[Anima] Outfit concluída, ${images.length} imagem(ns)`);
+      const savedImages = saveImagesToHistory(response.prompt_id, images, outfitParams, filenamePrefix);
+      return { promptId: response.prompt_id, images: savedImages };
+    } finally {
+      removeTempFiles([charFilename, outfitFilename], comfyInputDir);
+    }
+  });
   ipcMain.handle("comfyui:captionImage", async (event, params) => {
     requireMainWindow(event);
     console.log("[Anima] Iniciando captioning de imagem...");
@@ -1917,6 +2026,13 @@ function setupIPC() {
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("clipboard:readImage", () => {
+    const { clipboard } = require2("electron");
+    const img = clipboard.readImage();
+    if (img.isEmpty()) return null;
+    const png = img.toPNG();
+    return `data:image/png;base64,${png.toString("base64")}`;
   });
   ipcMain.handle("pose:extractFromImage", async (event, imagePath) => {
     requireMainWindow(event);
@@ -2064,6 +2180,14 @@ function setupIPC() {
         const metaPath = join(dirPath, "metadata.json");
         if (!existsSync(metaPath)) continue;
         const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+        if (historyParamsHasBloat(meta.params)) {
+          try {
+            meta.params = sanitizeHistoryParams(meta.params);
+            writeFileSync(metaPath, JSON.stringify(meta));
+          } catch (err) {
+            console.warn(`[Anima] Falha ao regravar histórico enxuto ${dir}:`, err);
+          }
+        }
         const filenames = Array.isArray(meta.images) ? meta.images.map((i) => i.filename).filter(Boolean) : meta.filename ? [meta.filename] : [];
         for (const filename of filenames) {
           const imgPath = join(dirPath, filename);

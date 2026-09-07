@@ -8,17 +8,21 @@ import { useGenerationProgress } from '../hooks/useGenerationProgress'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
 import { useLoraSelection } from '../hooks/useLoraSelection'
 import { resizeImageForModel } from '../utils/imageResize'
+import { loadTabSettings, saveTabSettings } from '../utils/tabSettings'
+
+const TAB_KEY = 'recreate'
 
 export function RecreateTab() {
-  const { status, loras, models, refreshLoras, addToHistory } = useSessionStore()
+  const { status, models, refreshLoras, addToHistory } = useSessionStore()
 
-  const [selectedModel, setSelectedModel] = useState<DiffusionModelId>('anima')
-  const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
-  const { selectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection()
-  const [denoise, setDenoise] = useState(0.85)
+  const savedSettings = useRef(loadTabSettings(TAB_KEY)).current
+  const [selectedModel, setSelectedModel] = useState<DiffusionModelId>(savedSettings.diffusionModel ?? 'anima')
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState(savedSettings.checkpoint ?? '')
+  const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
+  const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.85)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
-  const [caption, setCaption] = useState('')
+  const [caption, setCaption] = useState(savedSettings.prompt ?? '')
   const [captioning, setCaptioning] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,8 +31,29 @@ export function RecreateTab() {
   const [blurred, setBlurred] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const loras = useSessionStore((s) => s.tabLoras)
 
   useAutoSelectModel(models, selectedModel, selectedCheckpoint, setSelectedCheckpoint)
+
+  // Carrega a lista de LoRAs do modelo selecionado (mantém a seleção restaurada se ainda válida)
+  useEffect(() => {
+    const folder = MODEL_PROFILES[selectedModel].loraFolder
+    window.electronAPI.loras.list(folder).then((newLoras) => {
+      useSessionStore.getState().setTabLoras(newLoras)
+      setSelectedLoras((prev) => prev.filter((sel) => newLoras.some((l) => l.name === sel.name)))
+    }).catch(() => { })
+  }, [selectedModel, setSelectedLoras])
+
+  // Persiste as configurações da aba sempre que mudam
+  useEffect(() => {
+    saveTabSettings(TAB_KEY, {
+      diffusionModel: selectedModel,
+      checkpoint: selectedCheckpoint,
+      loras: selectedLoras,
+      prompt: caption,
+      denoise
+    })
+  }, [selectedModel, selectedCheckpoint, selectedLoras, caption, denoise])
 
   // Imagem escolhida no histórico (sidebar) vira a imagem de origem
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
@@ -53,14 +78,6 @@ export function RecreateTab() {
       })
     }
   }, [pendingPick, requestHistoryPick])
-
-  useEffect(() => {
-    clearLoras()
-    const folder = MODEL_PROFILES[selectedModel].loraFolder
-    window.electronAPI.loras.list(folder).then((newLoras) => {
-      useSessionStore.getState().setLoras(newLoras)
-    }).catch(() => { })
-  }, [selectedModel, clearLoras])
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return

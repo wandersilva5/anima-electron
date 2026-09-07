@@ -667,7 +667,36 @@ export class WorkflowManager {
     seed: number,
     poseWorkflowPath: string
   ): Record<string, unknown> {
-    const raw = readFileSync(poseWorkflowPath, 'utf-8')
+    return this.buildTwoImagePrompt(poseWorkflowPath, charFilename, poseFilename, seed)
+  }
+
+  /**
+   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
+   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
+   *   image1 = personagem (identidade)   → nó LoadImage id 4
+   *   image2 = referência de roupa       → nó LoadImage id 5
+   * Mantém identidade e pose da imagem 1, transfere apenas a roupa da imagem 2.
+   */
+  buildOutfitPrompt(
+    charFilename: string,
+    outfitFilename: string,
+    seed: number,
+    outfitWorkflowPath: string
+  ): Record<string, unknown> {
+    return this.buildTwoImagePrompt(outfitWorkflowPath, charFilename, outfitFilename, seed)
+  }
+
+  /**
+   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Pose/Krea2-Outfit).
+   * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
+   */
+  private buildTwoImagePrompt(
+    workflowPath: string,
+    image1Filename: string,
+    image2Filename: string,
+    seed: number
+  ): Record<string, unknown> {
+    const raw = readFileSync(workflowPath, 'utf-8')
     const workflow: WorkflowJSON = JSON.parse(raw)
     const controlAfterGenValues = new Set(['randomize', 'fixed', 'increment', 'decrement', 'comfy'])
 
@@ -721,10 +750,10 @@ export class WorkflowManager {
 
     // Substitui filenames nos LoadImage
     const charNode = prompt['4'] as { inputs: Record<string, unknown> } | undefined
-    if (charNode?.inputs) charNode.inputs['image'] = charFilename
+    if (charNode?.inputs) charNode.inputs['image'] = image1Filename
 
-    const poseNode = prompt['5'] as { inputs: Record<string, unknown> } | undefined
-    if (poseNode?.inputs) poseNode.inputs['image'] = poseFilename
+    const refNode = prompt['5'] as { inputs: Record<string, unknown> } | undefined
+    if (refNode?.inputs) refNode.inputs['image'] = image2Filename
 
     // Substitui semente no KSampler (nó 9)
     const ksamplerNode = prompt['9'] as { inputs: Record<string, unknown> } | undefined

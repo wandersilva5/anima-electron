@@ -24,5 +24,5 @@ export function useLoraSelection(initial: LoraSelection[] = []) {
     )
   }, [])
 
-  return { selectedLoras, toggleLora, clearLoras, setLoraStrength }
+  return { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength }
 }

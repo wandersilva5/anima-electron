@@ -67,6 +67,35 @@ function getImageExt(filename: string): string {
   return 'png'
 }
 
+const HISTORY_PARAM_BLOCKLIST = new Set([
+  'imageBase64',
+  'maskBase64',
+  'poseImageBase64',
+  'poseData',
+  'imagePath',
+  'maskFilename',
+  'poseImageFilename'
+])
+const HISTORY_PARAM_MAX_STRING = 100 * 1024
+
+function sanitizeHistoryParams(params: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const clean: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (HISTORY_PARAM_BLOCKLIST.has(key)) continue
+    if (typeof value === 'string' && value.length > HISTORY_PARAM_MAX_STRING) continue
+    clean[key] = value
+  }
+  return clean
+}
+
+function historyParamsHasBloat(params: Record<string, unknown> | null | undefined): boolean {
+  return Object.entries(params ?? {}).some(
+    ([key, value]) =>
+      HISTORY_PARAM_BLOCKLIST.has(key) ||
+      (typeof value === 'string' && value.length > HISTORY_PARAM_MAX_STRING)
+  )
+}
+
 function saveImagesToHistory(
   promptId: string,
   images: { filename: string; data: string }[],
@@ -87,7 +116,7 @@ function saveImagesToHistory(
     }
 
     const metadata: { params: Record<string, unknown>; timestamp: number; images: { filename: string }[] } = {
-      params,
+      params: sanitizeHistoryParams(params),
       timestamp: Date.now(),
       images: []
     }
@@ -582,6 +611,88 @@ function setupIPC(): void {
     }
   })
 
+  ipcMain.handle('comfyui:generateOutfit', async (event, rawParams) => {
+    requireMainWindow(event)
+
+    const p = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>
+    const charImageBase64 = typeof p.charImageBase64 === 'string' ? p.charImageBase64 : null
+    const outfitImageBase64 = typeof p.outfitImageBase64 === 'string' ? p.outfitImageBase64 : null
+    const seed = typeof p.seed === 'number' ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647)
+    const filenamePrefix = typeof p.filenamePrefix === 'string' ? p.filenamePrefix : 'anima-outfit'
+
+    if (!charImageBase64) throw new Error('Imagem da personagem não fornecida')
+    if (!outfitImageBase64) throw new Error('Imagem de roupa não fornecida')
+
+    // Resolve o caminho do workflow de roupa via profile (mesma resolução do WorkflowManager)
+    const outfitWorkflowFile = MODEL_PROFILES.krea2.outfitWorkflowFile
+    if (!outfitWorkflowFile) {
+      throw new Error('Perfil krea2 não define outfitWorkflowFile')
+    }
+    const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile)
+    if (!existsSync(outfitWorkflowPath)) {
+      throw new Error(`Workflow de roupa não encontrado: ${outfitWorkflowPath}`)
+    }
+
+    const settings = settingsManager.get()
+    const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+    const baseUrl = comfyClient.getBaseUrl()
+
+    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/)
+    const charExt = charMatch ? (charMatch[1] === 'jpeg' ? 'jpg' : charMatch[1]) : 'png'
+    const charFilename = `anima-outfit-char-${Date.now()}.${charExt}`
+
+    const outfitMatch = outfitImageBase64.match(/^data:image\/(\w+);base64,/)
+    const outfitExt = outfitMatch ? (outfitMatch[1] === 'jpeg' ? 'jpg' : outfitMatch[1]) : 'png'
+    const outfitFilename = `anima-outfit-ref-${Date.now()}.${outfitExt}`
+
+    await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl)
+    await uploadImageToComfyUI(outfitImageBase64, outfitFilename, comfyInputDir, baseUrl)
+    console.log('[Anima] Outfit: personagem=%s, referência=%s', charFilename, outfitFilename)
+
+    try {
+      const prompt = workflowManager.buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath)
+      console.log('[Anima] Outfit prompt construído, nós:', Object.keys(prompt).length)
+
+      // Extrai steps/cfg/dimensões reais do workflow para o histórico
+      const readNumInput = (nodeId: string, inputName: string, fallback: number): number => {
+        const node = prompt[nodeId] as { inputs?: Record<string, unknown> } | undefined
+        const val = node?.inputs?.[inputName]
+        return typeof val === 'number' ? val : fallback
+      }
+      const outfitParams = {
+        diffusionModel: 'krea2' as DiffusionModelId,
+        prompt: '',
+        negativePrompt: '',
+        seed,
+        steps: readNumInput('9', 'steps', 12),
+        cfg: readNumInput('9', 'cfg', 2.5),
+        width: readNumInput('8', 'width', 1024),
+        height: readNumInput('8', 'height', 1024),
+        loras: [],
+        modelName: ''
+      }
+
+      const response = await comfyClient.sendPrompt(prompt)
+      console.log('[Anima] Outfit prompt enviado, ID:', response.prompt_id)
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+      }
+
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+        }
+      )
+      console.log(`[Anima] Outfit concluída, ${images.length} imagem(ns)`)
+
+      const savedImages = saveImagesToHistory(response.prompt_id, images, outfitParams as unknown as Record<string, unknown>, filenamePrefix)
+      return { promptId: response.prompt_id, images: savedImages }
+    } finally {
+      removeTempFiles([charFilename, outfitFilename], comfyInputDir)
+    }
+  })
+
   ipcMain.handle('comfyui:captionImage', async (event, params: { imageBase64: string }) => {
     requireMainWindow(event)
     console.log('[Anima] Iniciando captioning de imagem...')
@@ -695,6 +806,15 @@ function setupIPC(): void {
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle('clipboard:readImage', () => {
+    const { clipboard } = require('electron') as typeof import('electron')
+    const img = clipboard.readImage()
+    if (img.isEmpty()) return null
+    // PNG é o formato canônico do nativeImage — preserva alpha e evita conversões com perda
+    const png = img.toPNG()
+    return `data:image/png;base64,${png.toString('base64')}`
   })
 
   ipcMain.handle('pose:extractFromImage', async (event, imagePath: string) => {
@@ -869,6 +989,17 @@ function setupIPC(): void {
         if (!existsSync(metaPath)) continue
 
         const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+
+        // Limpa params inchados (base64 de imagens) em históricos antigos,
+        // reescrevendo o arquivo em disco para reclamar o espaço
+        if (historyParamsHasBloat(meta.params)) {
+          try {
+            meta.params = sanitizeHistoryParams(meta.params)
+            writeFileSync(metaPath, JSON.stringify(meta))
+          } catch (err) {
+            console.warn(`[Anima] Falha ao regravar histórico enxuto ${dir}:`, err)
+          }
+        }
 
         // Novo formato: array de imagens. Antigo: campo `filename` único.
         const filenames: string[] = Array.isArray(meta.images)

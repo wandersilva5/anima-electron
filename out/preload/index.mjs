@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     generate: (params) => ipcRenderer.invoke("comfyui:generate", params),
     generateImprove: (params) => ipcRenderer.invoke("comfyui:generateImprove", params),
     generatePose: (params) => ipcRenderer.invoke("comfyui:generatePose", params),
+    generateOutfit: (params) => ipcRenderer.invoke("comfyui:generateOutfit", params),
     captionImage: (params) => ipcRenderer.invoke("comfyui:captionImage", params),
     clearCache: () => ipcRenderer.invoke("comfyui:clearCache"),
     setUrl: (url) => ipcRenderer.invoke("comfyui:setUrl", url),
@@ -47,6 +48,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readImage: (filePath) => ipcRenderer.invoke("file:readImage", filePath),
     readThumbnail: (filePath) => ipcRenderer.invoke("file:readThumbnail", filePath),
     selectImage: () => ipcRenderer.invoke("file:selectImage")
+  },
+  clipboard: {
+    readImage: () => ipcRenderer.invoke("clipboard:readImage")
   },
   pose: {
     extractFromImage: (imagePath) => ipcRenderer.invoke("pose:extractFromImage", imagePath),

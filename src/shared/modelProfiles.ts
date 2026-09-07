@@ -24,6 +24,7 @@ export const MODEL_PROFILES: Record<DiffusionModelId, ModelProfile> = {
     description: 'Krea2 Turbo — geração rápida, sem prompt negativo',
     workflowFile: 'Krea2 - Simples.json',
     poseWorkflowFile: 'Krea2-Pose.json',
+    outfitWorkflowFile: 'Krea2-Outfit.json',
     loraFolder: 'Krea2',
     hasNegativePrompt: false,
     hasLoraClipStrength: true,

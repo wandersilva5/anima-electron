@@ -24,6 +24,7 @@ interface ElectronAPI {
     generate: (params: unknown) => Promise<GenerateResult>
     generateImprove: (params: unknown) => Promise<GenerateResult>
     generatePose: (params: import('./types').PoseGenerationParams) => Promise<GenerateResult>
+    generateOutfit: (params: import('./types').OutfitGenerationParams) => Promise<GenerateResult>
     captionImage: (params: { imageBase64: string }) => Promise<{ text: string }>
     clearCache: () => Promise<{ success: boolean; message: string }>
     setUrl: (url: string) => Promise<void>
@@ -56,8 +57,11 @@ interface ElectronAPI {
     selectImage: () => Promise<string | null>
   }
   pose: {
-    extractFromImage: (imagePath: string) => Promise<Record<string, [number, number]> | null>,
+    extractFromImage: (imagePath: string) => Promise<Record<string, [number, number]> | null>
     extractFromBase64: (imageBase64: string) => Promise<Record<string, [number, number]> | null>
+  }
+  clipboard: {
+    readImage: () => Promise<string | null>
   }
 }
 

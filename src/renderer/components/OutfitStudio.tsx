@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Play, Clock } from 'lucide-react'
+import { Upload, Trash2, Play, Clock, Shirt, ClipboardPaste, AlertCircle } from 'lucide-react'
 import type { GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
@@ -13,12 +13,41 @@ interface DropPanelProps {
   onDragOver: (v: boolean) => void
   onFile: (file: File) => void
   onClear: () => void
+  onPaste: (src: string) => void
   inputRef: React.RefObject<HTMLInputElement>
   badge?: string
   badgeClass?: string
 }
 
-function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, inputRef, badge, badgeClass }: DropPanelProps) {
+function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, onPaste, inputRef, badge, badgeClass }: DropPanelProps) {
+  const [pasting, setPasting] = useState(false)
+  const [pasteError, setPasteError] = useState<string | null>(null)
+
+  // Erro de paste desaparece sozinho após 4s
+  useEffect(() => {
+    if (!pasteError) return
+    const t = setTimeout(() => setPasteError(null), 4000)
+    return () => clearTimeout(t)
+  }, [pasteError])
+
+  const handlePasteFromClipboard = useCallback(async () => {
+    if (pasting) return
+    setPasting(true)
+    setPasteError(null)
+    try {
+      const data = await window.electronAPI.clipboard.readImage()
+      if (data) {
+        onPaste(data)
+      } else {
+        setPasteError('Nenhuma imagem na área de transferência')
+      }
+    } catch {
+      setPasteError('Falha ao ler a área de transferência')
+    } finally {
+      setPasting(false)
+    }
+  }, [pasting, onPaste])
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     onDragOver(false)
@@ -35,6 +64,27 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
             {badge}
           </span>
         )}
+        {pasteError && (
+          <span className="flex items-center gap-1 text-[9px] text-error truncate" title={pasteError}>
+            <AlertCircle size={10} className="shrink-0" />
+            <span className="truncate">{pasteError}</span>
+          </span>
+        )}
+        <button
+          onClick={handlePasteFromClipboard}
+          disabled={pasting}
+          className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors shrink-0 ${
+            pasting
+              ? 'bg-surface-tertiary text-text-muted cursor-not-allowed'
+              : 'bg-surface-tertiary text-text-secondary hover:text-text-primary hover:bg-border'
+          }`}
+          title="Colar imagem da área de transferência (Ctrl+V)"
+        >
+          {pasting
+            ? <span className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+            : <ClipboardPaste size={12} />}
+          Colar
+        </button>
       </div>
 
       {!src ? (
@@ -56,7 +106,7 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
           <span className="text-sm text-text-secondary font-medium px-4 text-center">
             {hint}
           </span>
-          <span className="text-[10px] text-text-muted">Clique ou arraste · PNG, JPG, WebP</span>
+          <span className="text-[10px] text-text-muted">Clique, arraste ou cole · PNG, JPG, WebP</span>
           <input
             ref={inputRef}
             type="file"
@@ -77,6 +127,16 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
             draggable={false}
           />
           <div className="absolute top-2 left-2 flex items-center gap-1.5">
+            <button
+              onClick={handlePasteFromClipboard}
+              disabled={pasting}
+              className="p-1.5 rounded-lg bg-surface/80 backdrop-blur-sm text-text-secondary hover:text-text-primary hover:bg-surface transition-colors"
+              title="Colar imagem da área de transferência"
+            >
+              {pasting
+                ? <span className="block w-[14px] h-[14px] border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                : <ClipboardPaste size={14} />}
+            </button>
             <button
               onClick={() => inputRef.current?.click()}
               className="p-1.5 rounded-lg bg-surface/80 backdrop-blur-sm text-text-secondary hover:text-text-primary hover:bg-surface transition-colors"
@@ -108,28 +168,28 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
   )
 }
 
-export function PoseStudio() {
+export function OutfitStudio() {
   const { status, models, refreshLoras, addToHistory } = useSessionStore()
   const loras = useSessionStore((s) => s.tabLoras)
 
-  const [poseSrc, setPoseSrc] = useState<string | null>(null)
   const [charSrc, setCharSrc] = useState<string | null>(null)
+  const [outfitSrc, setOutfitSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
 
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
-  const [dragOverPose, setDragOverPose] = useState(false)
   const [dragOverChar, setDragOverChar] = useState(false)
+  const [dragOverOutfit, setDragOverOutfit] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
-  // ModelSidebar state — não usado na geração de pose (Krea2-Pose tem modelo fixo no workflow)
+  // ModelSidebar state — não usado na geração de roupa (Krea2-Outfit tem modelo fixo no workflow)
   // mas mantemos para consistência visual
   const [selectedCheckpoint] = useState('')
   const selectedLoras: import('@shared/types').LoraSelection[] = []
 
-  const poseInputRef = useRef<HTMLInputElement>(null)
   const charInputRef = useRef<HTMLInputElement>(null)
+  const outfitInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const folder = 'Krea2'
@@ -159,17 +219,6 @@ export function PoseStudio() {
     }
   }, [pendingPick, requestHistoryPick])
 
-  const handlePoseFile = useCallback((file: File) => {
-    if (!file.type.startsWith('image/')) return
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      setPoseSrc(e.target?.result as string)
-      setResultSrc(null)
-      setError(null)
-    }
-    reader.readAsDataURL(file)
-  }, [])
-
   const handleCharFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
     const reader = new FileReader()
@@ -181,10 +230,15 @@ export function PoseStudio() {
     reader.readAsDataURL(file)
   }, [])
 
-  const clearPose = useCallback(() => {
-    setPoseSrc(null)
-    setResultSrc(null)
-    if (poseInputRef.current) poseInputRef.current.value = ''
+  const handleOutfitFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      setOutfitSrc(e.target?.result as string)
+      setResultSrc(null)
+      setError(null)
+    }
+    reader.readAsDataURL(file)
   }, [])
 
   const clearChar = useCallback(() => {
@@ -193,8 +247,26 @@ export function PoseStudio() {
     if (charInputRef.current) charInputRef.current.value = ''
   }, [])
 
+  const clearOutfit = useCallback(() => {
+    setOutfitSrc(null)
+    setResultSrc(null)
+    if (outfitInputRef.current) outfitInputRef.current.value = ''
+  }, [])
+
+  const handlePasteChar = useCallback((src: string) => {
+    setCharSrc(src)
+    setResultSrc(null)
+    setError(null)
+  }, [])
+
+  const handlePasteOutfit = useCallback((src: string) => {
+    setOutfitSrc(src)
+    setResultSrc(null)
+    setError(null)
+  }, [])
+
   const handleGenerate = useCallback(async () => {
-    if (!poseSrc || !charSrc) return
+    if (!outfitSrc || !charSrc) return
 
     setGenerating(true)
     setError(null)
@@ -205,11 +277,11 @@ export function PoseStudio() {
 
     try {
       const seed = Math.floor(Math.random() * 2147483647)
-      const result = await window.electronAPI.comfyui.generatePose({
+      const result = await window.electronAPI.comfyui.generateOutfit({
         charImageBase64: charSrc,
-        poseImageBase64: poseSrc,
+        outfitImageBase64: outfitSrc,
         seed,
-        filenamePrefix: 'anima-pose'
+        filenamePrefix: 'anima-outfit'
       })
 
       const image = result.images?.[0]
@@ -239,12 +311,12 @@ export function PoseStudio() {
         addToHistory(entry)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao gerar com pose')
+      setError(err instanceof Error ? err.message : 'Erro ao gerar com troca de roupa')
     } finally {
       stopProgress()
       setGenerating(false)
     }
-  }, [poseSrc, charSrc, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
+  }, [outfitSrc, charSrc, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -252,25 +324,27 @@ export function PoseStudio() {
         <div className="w-full max-w-5xl flex flex-col items-center gap-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
             <DropPanel
-              title="1. Pose de Referência"
-              hint="Arraste ou selecione a imagem com a pose desejada"
-              src={poseSrc}
-              dragOver={dragOverPose}
-              onDragOver={setDragOverPose}
-              onFile={handlePoseFile}
-              onClear={clearPose}
-              inputRef={poseInputRef}
-            />
-
-            <DropPanel
-              title="2. Personagem (identidade)"
+              title="1. Personagem (identidade)"
               hint="Arraste ou selecione a imagem da personagem"
               src={charSrc}
               dragOver={dragOverChar}
               onDragOver={setDragOverChar}
               onFile={handleCharFile}
               onClear={clearChar}
+              onPaste={handlePasteChar}
               inputRef={charInputRef}
+            />
+
+            <DropPanel
+              title="2. Roupa de Referência"
+              hint="Arraste ou selecione a imagem com a roupa desejada"
+              src={outfitSrc}
+              dragOver={dragOverOutfit}
+              onDragOver={setDragOverOutfit}
+              onFile={handleOutfitFile}
+              onClear={clearOutfit}
+              onPaste={handlePasteOutfit}
+              inputRef={outfitInputRef}
             />
 
             <div className="flex flex-col gap-2 min-w-0">
@@ -287,9 +361,9 @@ export function PoseStudio() {
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
-                    <Wand2 size={28} className="text-text-muted" />
+                    <Shirt size={28} className="text-text-muted" />
                     <span className="text-sm text-text-muted">
-                      {generating ? 'Gerando...' : 'A personagem recriada com a pose aparecerá aqui'}
+                      {generating ? 'Gerando...' : 'A personagem com a roupa nova aparecerá aqui'}
                     </span>
                   </div>
                 )}
@@ -324,7 +398,7 @@ export function PoseStudio() {
           <div className="w-full p-3 rounded-lg bg-accent/5 border border-accent/20 text-xs text-text-secondary flex items-start gap-2">
             <span className="text-accent shrink-0 mt-0.5">ℹ</span>
             <span>
-              O modelo <strong className="text-text-primary">Krea2</strong> transfere a pose diretamente por referência visual — sem necessidade de extração de esqueleto. Basta fornecer as duas imagens.
+              O modelo <strong className="text-text-primary">Krea2</strong> mantém a identidade e a pose da personagem da primeira imagem e transfere apenas a roupa da segunda — sem necessidade de máscaras ou ControlNet.
             </span>
           </div>
         </div>
@@ -350,9 +424,9 @@ export function PoseStudio() {
 
             <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
               <p className="font-medium text-text-secondary">Como funciona:</p>
-              <p>1. A <strong className="text-text-primary">Pose de Referência</strong> define a postura e ângulo do corpo.</p>
-              <p>2. O <strong className="text-text-primary">Personagem</strong> define a identidade, rosto e roupa a preservar.</p>
-              <p>3. O Krea2 combina os dois para gerar o resultado final.</p>
+              <p>1. A <strong className="text-text-primary">Personagem</strong> define a identidade, rosto, pose e corpo a preservar.</p>
+              <p>2. A <strong className="text-text-primary">Roupa de Referência</strong> define a roupa de outro personagem a transferir.</p>
+              <p>3. O Krea2 combina os dois: a personagem da imagem 1 vestindo a roupa da imagem 2.</p>
             </div>
           </div>
 
@@ -395,11 +469,11 @@ export function PoseStudio() {
 
             <button
               onClick={handleGenerate}
-              disabled={!poseSrc || !charSrc || generating || !status.online}
+              disabled={!outfitSrc || !charSrc || generating || !status.online}
               className={`
                 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium text-sm
                 transition-all duration-200
-                ${(!poseSrc || !charSrc || generating || !status.online)
+                ${(!outfitSrc || !charSrc || generating || !status.online)
                   ? 'bg-accent-muted text-text-muted cursor-not-allowed'
                   : 'bg-accent text-white hover:bg-accent-hover active:scale-[0.98] shadow-lg shadow-accent/20'
                 }
@@ -413,7 +487,7 @@ export function PoseStudio() {
               ) : (
                 <>
                   <Play size={16} />
-                  Gerar com Pose
+                  Gerar com Roupa
                 </>
               )}
             </button>

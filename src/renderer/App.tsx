@@ -9,7 +9,8 @@ import { SettingsModal } from './components/SettingsModal'
 import { ImageImprove } from './components/ImageImprove'
 import { PoseStudio } from './components/PoseStudio'
 import { RecreateTab } from './components/RecreateTab'
-import { Sun, Moon, Settings, PanelLeftClose, PanelLeftOpen, Sparkles, Wand2, PersonStanding, RotateCcw } from 'lucide-react'
+import { OutfitStudio } from './components/OutfitStudio'
+import { Sun, Moon, Settings, PanelLeftClose, PanelLeftOpen, Sparkles, Wand2, PersonStanding, RotateCcw, Shirt } from 'lucide-react'
 
 function ChibiLogo() {
   return (
@@ -42,8 +43,8 @@ export default function App() {
   const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
   const [initialized, setInitialized] = useState(false)
   const [appVersion, setAppVersion] = useState('')
-  const [activeTab, setActiveTab] = useState<'generate' | 'improve' | 'pose' | 'recreate'>(() => {
-    return (localStorage.getItem('anima-active-tab') as 'generate' | 'improve' | 'pose' | 'recreate') || 'generate'
+  const [activeTab, setActiveTab] = useState<'generate' | 'improve' | 'pose' | 'recreate' | 'outfit'>(() => {
+    return (localStorage.getItem('anima-active-tab') as 'generate' | 'improve' | 'pose' | 'recreate' | 'outfit') || 'generate'
   })
   const [historyOpen, setHistoryOpen] = useState(() => {
     const stored = localStorage.getItem('anima-history-open')
@@ -179,6 +180,17 @@ export default function App() {
             Pose
           </button>
           <button
+            onClick={() => { setActiveTab('outfit'); localStorage.setItem('anima-active-tab', 'outfit') }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              activeTab === 'outfit'
+                ? 'bg-accent/20 text-accent'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-tertiary'
+            }`}
+          >
+            <Shirt size={14} />
+            Roupa
+          </button>
+          <button
             onClick={() => { setActiveTab('recreate'); localStorage.setItem('anima-active-tab', 'recreate') }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               activeTab === 'recreate'
@@ -239,6 +251,8 @@ export default function App() {
             <ImageImprove />
           ) : activeTab === 'recreate' ? (
             <RecreateTab />
+          ) : activeTab === 'outfit' ? (
+            <OutfitStudio />
           ) : (
             <PoseStudio />
           )}
