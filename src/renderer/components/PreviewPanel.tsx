@@ -64,17 +64,8 @@ export function PreviewPanel() {
           <img
             src={imgSrc ?? ''}
             alt="Generated"
-            className={`absolute inset-0 w-full h-full object-contain transition-all duration-300 ${blurred ? 'blur-3xl scale-105' : ''}`}
+            className={`absolute inset-0 w-full h-full object-contain transition-all duration-300 ${blurred ? 'blur-[150px] scale-105' : ''}`}
           />
-          {blurred && (
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-              <div className="text-center">
-                <EyeOff size={32} className="mx-auto mb-2 text-text-muted" />
-                <p className="text-sm text-text-muted">Imagem oculta por segurança</p>
-                <p className="text-xs text-text-muted/60 mt-1">Clique no olho para revelar</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 

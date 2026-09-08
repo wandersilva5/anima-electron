@@ -20,6 +20,75 @@ function extractAnyString(obj: unknown, depth = 0): string | null {
   return null
 }
 
+// ————— Organização de captions (aba Recriar) —————
+
+/** Tags de rating/qualidade que não descrevem a imagem e viram ruído no prompt */
+const CAPTION_NOISE_PATTERNS: RegExp[] = [
+  /^rating[:\s]/i,
+  /^(safe|questionable|sensitive|explicit|nsfw|sfw)$/,
+  /^score[\s_-]?\d+$/i,
+  /^(general|ecchi|mature|adult)$/,
+  /^(absurdres|highres|lowres)$/,
+  /^(masterpiece|best quality|amazing quality|normal quality|low quality|worst quality)$/,
+  /^\d+([.,]\d+)?$/
+]
+
+/** Ordem de leitura desejada: sujeito → aparência → rosto/expressão → roupa → pose → cenário */
+const CAPTION_CATEGORY_ORDER: RegExp[] = [
+  /^(\d+\+?(girl|boy|other)s?|multiple (girls|boys|views)|solo|couple|group|crowd|no humans)$/,
+  /(hair|eyes|eye|skin|breast|body|ears|horn|tail|wing|freckle|mole|scar|muscle|navel|thigh|leg|arm|shoulder|neck|feet|foot)/,
+  /(smile|blush|expression|face|mouth|tongue|lip|grin|frown|cry|crying|tears|sweat|glasses|makeup|eyepatch|forehead|nose)/,
+  /(dress|shirt|skirt|pant|short|jacket|coat|bra|panties|lingerie|sock|shoe|boot|heel|hat|cap|glove|scarf|tie|ribbon|necklace|earring|jewelry|bracelet|ring|armor|helmet|uniform|costume|clothes|clothing|nude|topless|barefoot|bare|collar|leash|belt|bag|backpack|weapon|sword|staff)/,
+  /(stand|sit|lying|lie|kneel|squat|crouch|walk|run|jump|crawl|bend|lean|stretch|hand|finger|pose|from behind|hug|kiss|hold|carry|pull|push|reach|wave|point|covering|pov|sitting|standing)/,
+  /(background|outdoors|indoors|sky|beach|forest|city|room|water|nature|scenery|night|day|sunset|sunrise|building|street|window|door|bed|chair|table|floor|wall|grass|tree|flower|leaf|mountain|ocean|sea|river|lake|cloud|star|moon|sun|rain|snow|wind)/
+]
+
+function normalizeCaptionTag(raw: string): string | null {
+  let t = raw.trim()
+  if (!t) return null
+  // Remove pesos "tag:1.2", parênteses e colchetes de escape
+  t = t.replace(/\(([^()]*)(?::[0-9.]+)?\)/g, '$1')
+  t = t.replace(/[[\]{}\\]/g, '')
+  t = t.replace(/_/g, ' ')
+  t = t.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (t.length < 2) return null
+  return t
+}
+
+/**
+ * Organiza o texto cru de um tagger (ex.: WD14) em um prompt legível:
+ * normaliza separadores, remove ruído e duplicatas, e ordena por categoria.
+ * Captions em linguagem natural (Florence2/JoyCaption, sem vírgulas) são devolvidos apenas limpos.
+ */
+export function organizeCaptionText(raw: string): string {
+  const text = raw.replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+
+  const segments = text.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean)
+  // Poucos segmentos = caption em linguagem natural, não uma lista de tags
+  if (segments.length < 3) return text
+
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const seg of segments) {
+    const tag = normalizeCaptionTag(seg)
+    if (!tag) continue
+    if (CAPTION_NOISE_PATTERNS.some((p) => p.test(tag))) continue
+    if (seen.has(tag)) continue
+    seen.add(tag)
+    unique.push(tag)
+  }
+  if (unique.length === 0) return text
+
+  const categorized = unique.map((tag, idx) => {
+    const cat = CAPTION_CATEGORY_ORDER.findIndex((test) => test.test(tag))
+    return { tag, idx, cat: cat === -1 ? CAPTION_CATEGORY_ORDER.length : cat }
+  })
+  categorized.sort((a, b) => a.cat - b.cat || a.idx - b.idx)
+
+  return categorized.map((x) => x.tag).join(', ')
+}
+
 export class ComfyUIClient {
   private baseUrl: string
 
@@ -314,7 +383,7 @@ export class ComfyUIClient {
               const found = extractAnyString(output)
               if (found) {
                 console.log(`[ComfyUIClient] Caption extraído do nó ${nodeType}: ${found.slice(0, 200)}`)
-                return { text: found }
+                return { text: organizeCaptionText(found) }
               }
             }
           }
