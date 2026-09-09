@@ -264,7 +264,7 @@ export function RecreateTab() {
               <img
                 src={resultSrc && showingResult ? resultSrc : originalSrc}
                 alt="Preview"
-                className={`w-full h-auto max-h-[60vh] object-contain transition-all duration-300 ${blurred ? 'blur-3xl scale-105' : ''}`}
+                className={`w-full h-auto max-h-[60vh] object-contain transition-all duration-300 ${blurred ? 'blur-[200px] scale-105' : ''}`}
                 draggable={false}
               />
 
