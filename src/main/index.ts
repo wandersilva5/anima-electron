@@ -693,9 +693,10 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle('comfyui:captionImage', async (event, params: { imageBase64: string }) => {
+  ipcMain.handle('comfyui:captionImage', async (event, params: { imageBase64: string; mode?: 'descriptive' | 'tags' }) => {
     requireMainWindow(event)
-    console.log('[Anima] Iniciando captioning de imagem...')
+    const mode = params.mode ?? 'descriptive'
+    console.log(`[Anima] Iniciando captioning de imagem (modo: ${mode})...`)
 
     if (!params.imageBase64) {
       throw new Error('Imagem não fornecida')
@@ -711,7 +712,7 @@ function setupIPC(): void {
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl)
 
     try {
-      const result = await comfyClient.captionImage(inputFilename)
+      const result = await comfyClient.captionImage(inputFilename, mode)
       console.log('[Anima] Caption gerado:', result.text ? result.text.slice(0, 100) + '...' : 'vazio')
       return result
     } finally {

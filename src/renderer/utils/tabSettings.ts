@@ -13,6 +13,7 @@ interface TabSettings {
   loras: LoraSelection[]
   prompt: string
   denoise: number
+  captionMode?: 'descriptive' | 'tags'
 }
 
 export function loadTabSettings(key: string): Partial<TabSettings> {

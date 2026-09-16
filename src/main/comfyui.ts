@@ -55,15 +55,22 @@ function normalizeCaptionTag(raw: string): string | null {
   return t
 }
 
+import { synthesizeDescriptiveCaption } from './captionSynthesizer'
+
 /**
- * Organiza o texto cru de um tagger (ex.: WD14) em um prompt legível:
- * normaliza separadores, remove ruído e duplicatas, e ordena por categoria.
- * Captions em linguagem natural (Florence2/JoyCaption, sem vírgulas) são devolvidos apenas limpos.
+ * Organiza o texto cru de um tagger (ex.: WD14) ou VLM:
+ * - Se mode === 'descriptive' (padrão): sintetiza uma descrição rica e estruturada em prosa natural.
+ * - Se mode === 'tags': limpa ruídos, remove duplicatas e ordena por categoria.
  */
-export function organizeCaptionText(raw: string): string {
+export function organizeCaptionText(raw: string, mode: 'descriptive' | 'tags' = 'descriptive'): string {
   const text = raw.replace(/\s+/g, ' ').trim()
   if (!text) return ''
 
+  if (mode === 'descriptive') {
+    return synthesizeDescriptiveCaption(text)
+  }
+
+  // Modo 'tags': organiza lista limpa e ordenada
   const segments = text.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean)
   // Poucos segmentos = caption em linguagem natural, não uma lista de tags
   if (segments.length < 3) return text
@@ -266,7 +273,8 @@ export class ComfyUIClient {
   }
 
   async captionImage(
-    inputFilename: string
+    inputFilename: string,
+    mode: 'descriptive' | 'tags' = 'descriptive'
   ): Promise<{ text: string }> {
     // Fetch ALL available node types from ComfyUI
     let allNodesInfo: Record<string, any> = {}
@@ -383,7 +391,7 @@ export class ComfyUIClient {
               const found = extractAnyString(output)
               if (found) {
                 console.log(`[ComfyUIClient] Caption extraído do nó ${nodeType}: ${found.slice(0, 200)}`)
-                return { text: organizeCaptionText(found) }
+                return { text: organizeCaptionText(found, mode) }
               }
             }
           }

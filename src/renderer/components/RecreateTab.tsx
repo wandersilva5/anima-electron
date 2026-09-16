@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock, Eye, EyeOff } from 'lucide-react'
+import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock, Eye, EyeOff, Copy, Check } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import type { DiffusionModelId, GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
@@ -23,8 +23,10 @@ export function RecreateTab() {
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
   const [caption, setCaption] = useState(savedSettings.prompt ?? '')
+  const [captionMode, setCaptionMode] = useState<'descriptive' | 'tags'>(savedSettings.captionMode ?? 'descriptive')
   const [captioning, setCaptioning] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [showingResult, setShowingResult] = useState(true)
@@ -51,9 +53,10 @@ export function RecreateTab() {
       checkpoint: selectedCheckpoint,
       loras: selectedLoras,
       prompt: caption,
-      denoise
+      denoise,
+      captionMode
     })
-  }, [selectedModel, selectedCheckpoint, selectedLoras, caption, denoise])
+  }, [selectedModel, selectedCheckpoint, selectedLoras, caption, denoise, captionMode])
 
   // Imagem escolhida no histórico (sidebar) vira a imagem de origem
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
@@ -200,6 +203,34 @@ export function RecreateTab() {
     }
   }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
 
+  const handleExtractCaption = useCallback(async () => {
+    if (!originalSrc) return
+    setCaptioning(true)
+    setError(null)
+    try {
+      const result = await window.electronAPI.comfyui.captionImage({
+        imageBase64: originalSrc,
+        mode: captionMode
+      })
+      if (result.text) {
+        setCaption(result.text)
+      } else {
+        setError('Não foi possível extrair a descrição. Tente escrever manualmente.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao gerar descrição')
+    } finally {
+      setCaptioning(false)
+    }
+  }, [originalSrc, captionMode])
+
+  const handleCopyCaption = useCallback(() => {
+    if (!caption) return
+    navigator.clipboard.writeText(caption)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [caption])
+
   const handleRecreate = useCallback(async () => {
     if (!originalSrc) return
 
@@ -207,7 +238,10 @@ export function RecreateTab() {
       setCaptioning(true)
       setError(null)
       try {
-        const result = await window.electronAPI.comfyui.captionImage({ imageBase64: originalSrc })
+        const result = await window.electronAPI.comfyui.captionImage({
+          imageBase64: originalSrc,
+          mode: captionMode
+        })
         if (result.text) {
           setCaption(result.text)
           await doRecreate(result.text)
@@ -222,7 +256,7 @@ export function RecreateTab() {
     } else {
       await doRecreate(caption)
     }
-  }, [originalSrc, caption, doRecreate])
+  }, [originalSrc, caption, captionMode, doRecreate])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -342,22 +376,110 @@ export function RecreateTab() {
 
             {/* Caption textarea */}
             <div>
-              <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-                Descrição Extraída
-              </label>
-              <textarea
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                placeholder={originalSrc ? 'Clique em "Recriar Imagem" para extrair a descrição e recriar automaticamente, ou digite manualmente.' : 'Faça upload de uma imagem primeiro.'}
-                rows={5}
-                className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
-                disabled={!originalSrc || generating}
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                  Descrição da Imagem
+                </label>
+
+                {/* Seletor de Formato: Descritivo vs Tags */}
+                <div className="flex items-center bg-surface p-0.5 rounded-lg border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setCaptionMode('descriptive')}
+                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${
+                      captionMode === 'descriptive'
+                        ? 'bg-accent text-white shadow-xs'
+                        : 'text-text-muted hover:text-text-primary'
+                    }`}
+                    title="Gera uma descrição rica e estruturada em prosa natural"
+                  >
+                    Descritivo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCaptionMode('tags')}
+                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${
+                      captionMode === 'tags'
+                        ? 'bg-accent text-white shadow-xs'
+                        : 'text-text-muted hover:text-text-primary'
+                    }`}
+                    title="Gera lista de tags organizadas (formato Danbooru)"
+                  >
+                    Tags
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <textarea
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  placeholder={
+                    originalSrc
+                      ? 'Clique em "Extrair Descrição" ou "Recriar Imagem" para descrever a imagem, ou digite aqui.'
+                      : 'Faça upload de uma imagem primeiro.'
+                  }
+                  rows={8}
+                  className="w-full bg-surface rounded-lg border border-border px-3 py-2.5 text-xs leading-relaxed text-text-primary placeholder:text-text-muted resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-accent transition-colors font-sans"
+                  disabled={!originalSrc || generating}
+                />
+              </div>
+
+              {/* Ações de Extração e Cópia */}
+              <div className="flex items-center justify-between mt-2">
+                <button
+                  type="button"
+                  onClick={handleExtractCaption}
+                  disabled={!originalSrc || captioning || generating || !status.online}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    !originalSrc || captioning || generating || !status.online
+                      ? 'bg-surface-tertiary text-text-muted cursor-not-allowed opacity-60'
+                      : 'bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30'
+                  }`}
+                  title="Extrai a descrição da imagem no formato selecionado sem iniciar geração"
+                >
+                  {captioning ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+                      <span>Extraindo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={13} />
+                      <span>{caption ? 'Reextrair Descrição' : 'Extrair Descrição'}</span>
+                    </>
+                  )}
+                </button>
+
+                {caption && (
+                  <button
+                    type="button"
+                    onClick={handleCopyCaption}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary transition-colors"
+                    title="Copiar descrição para a área de transferência"
+                  >
+                    {copied ? (
+                      <>
+                        <Check size={13} className="text-success" />
+                        <span className="text-success">Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={13} />
+                        <span>Copiar</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
               {caption && (
-                <div className="flex items-center gap-1.5 mt-1.5">
+                <div className="flex items-center gap-1.5 mt-2">
                   <Sparkles size={10} className="text-accent shrink-0" />
                   <span className="text-[10px] text-text-muted">
-                    Descrição extraída automaticamente. Edite se necessário.
+                    {captionMode === 'descriptive'
+                      ? 'Descrição descritiva estruturada gerada. Edite ou use em outras criações.'
+                      : 'Lista de tags gerada. Edite se necessário.'}
                   </span>
                 </div>
               )}
