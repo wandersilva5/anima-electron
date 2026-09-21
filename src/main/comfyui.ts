@@ -3,8 +3,16 @@ import type { ComfyUIStatus, ComfyUIPromptResponse, ComfyUIHistoryItem } from '@
 
 function extractAnyString(obj: unknown, depth = 0): string | null {
   if (depth > 5) return null
-  if (typeof obj === 'string' && obj.trim()) return obj.trim()
-  if (typeof obj === 'number') return String(obj)
+  if (typeof obj === 'string') {
+    const trimmed = obj.trim()
+    if (!trimmed) return null
+    // Ignora números puros ("0", "1") que aparecem como índices de slot
+    // nos outputs — não são caption. Tags reais como "1girl" passam.
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return null
+    if (trimmed.length < 2) return null
+    return trimmed
+  }
+  if (typeof obj === 'number' || typeof obj === 'boolean') return null
   if (typeof obj !== 'object' || obj === null) return null
   if (Array.isArray(obj)) {
     for (const item of obj) {
@@ -86,6 +94,24 @@ export function organizeCaptionText(raw: string, mode: 'descriptive' | 'tags' = 
     unique.push(tag)
   }
   if (unique.length === 0) return text
+
+  // Trava anti-duplicação no modo tags: sem marcador de contagem, o modelo
+  // tende a gerar 2 personagens a partir de 1. Padrão = solo (caso mais
+  // comum da aba Recriar); múltiplos reais já trazem 2girls/couple/group.
+  const hasCountTag = unique.some((t) =>
+    /^(solo|alone|single|1girl|1boy|2girls|3girls|4girls|2boys|3boys|multiple|couple|group|crowd|\d+\+?(girls|boys))$/i.test(t)
+  )
+  const hasMultipleTag = unique.some((t) =>
+    /^(2girls|3girls|4girls|2boys|3boys|multiple|couple|group|crowd|\d+\+?(girls|boys))$/i.test(t) ||
+    /^(multiple (girls|boys))$/i.test(t)
+  )
+  const hasNoHumans = unique.some((t) => /^(no humans|scenery|landscape)$/i.test(t))
+  // "girl"+"boy" sem marcador de contagem = casal (não solo).
+  const hasFemaleTag = unique.some((t) => /^(female|girl|woman|lady|heroine|waifu|1girl)$/i.test(t))
+  const hasMaleTag = unique.some((t) => /^(male|boy|man|guy|hero|1boy)$/i.test(t))
+  if (!hasCountTag && !hasNoHumans && !hasMultipleTag) {
+    unique.unshift(hasFemaleTag && hasMaleTag ? 'couple' : 'solo')
+  }
 
   const categorized = unique.map((tag, idx) => {
     const cat = CAPTION_CATEGORY_ORDER.findIndex((test) => test.test(tag))
@@ -287,10 +313,13 @@ export class ComfyUIClient {
       }
     } catch (err) {
       console.warn('[ComfyUIClient] Falha ao buscar nós disponíveis:', err)
-      return { text: '' }
+      throw new Error('Não foi possível falar com o ComfyUI (/object_info). Verifique se o ComfyUI está online e tente de novo.')
     }
 
     const allNodeTypes = Object.keys(allNodesInfo)
+    if (allNodeTypes.length === 0) {
+      throw new Error('Não foi possível ler a lista de nós do ComfyUI (/object_info vazio). Verifique se o ComfyUI está online e tente de novo.')
+    }
 
     // Filter actual captioning nodes using their input structure from object_info
     const knownCaptioningPrefixes = ['wdtagger', 'wd14tagger', 'florence2', 'joycaption', 'joy_caption']
@@ -299,6 +328,7 @@ export class ComfyUIClient {
       'manager', 'filter', 'sort', 'edit', 'selector', 'picker', 'switch']
 
     const possibleCaptionNodes: { nodeType: string; inputs: Record<string, unknown> }[] = []
+    const skippedNodes: string[] = []
     for (const name of allNodeTypes) {
       const lower = name.toLowerCase()
       const isCaptionNode = knownCaptioningPrefixes.some(p => lower.startsWith(p) || lower.includes(p)) ||
@@ -312,6 +342,7 @@ export class ComfyUIClient {
       const required = nodeInfo?.input?.required as Record<string, any> | undefined
       const captionInputs: Record<string, unknown> = {}
       let hasImageInput = false
+      let needsExternalModel = false
 
       if (required) {
         for (const [inputName, inputDef] of Object.entries(required)) {
@@ -325,7 +356,9 @@ export class ComfyUIClient {
             hasImageInput = true
           } else if (typeOrOptions === 'LATENT' || typeOrOptions === 'MODEL' ||
                      typeOrOptions === 'CLIP' || typeOrOptions === 'VAE') {
-            // Skip non-image complex inputs that can't be auto-provided
+            // Florence2/JoyCaption pedem MODEL/CLIP externos: o prompt genérico
+            // de 2 nós não consegue fornecer isso — marca para pular com motivo.
+            needsExternalModel = true
             continue
           } else if (Array.isArray(typeOrOptions)) {
             // COMBO type: use the default or first option
@@ -343,19 +376,40 @@ export class ComfyUIClient {
       }
 
       if (!hasImageInput) continue
+      if (needsExternalModel) {
+        skippedNodes.push(`${name} (pulado: exige MODEL/CLIP externo — use o workflow próprio do nó ou o WD14 Tagger)`)
+        continue
+      }
 
       possibleCaptionNodes.push({ nodeType: name, inputs: captionInputs })
     }
 
+    // WD14/tagger simples primeiro (funcionam com o prompt genérico de 2 nós);
+    // Florence/Joy por último, pois costumam exigir loader de modelo próprio.
+    const rank = (n: string) => {
+      const l = n.toLowerCase()
+      if (l.includes('wd14') || l.includes('wdtagger')) return 0
+      if (l.includes('tagger')) return 1
+      if (l.includes('florence')) return 2
+      return 3
+    }
+    possibleCaptionNodes.sort((a, b) => rank(a.nodeType) - rank(b.nodeType))
+
     console.log('[ComfyUIClient] Nós de captioning encontrados:', possibleCaptionNodes.map(n => `${n.nodeType} (${JSON.stringify(n.inputs).slice(0, 120)})`))
 
     if (possibleCaptionNodes.length === 0) {
-      console.warn('[ComfyUIClient] Nenhum nó de captioning instalado')
-      console.warn('[ComfyUIClient] Instale WD14Tagger, Florence2 ou JoyCaption no ComfyUI Manager')
-      return { text: '' }
+      const detail = skippedNodes.length > 0
+        ? ` Encontrados mas pulados: ${skippedNodes.join('; ')}.`
+        : ''
+      console.warn('[ComfyUIClient] Nenhum nó de captioning utilizável.' + detail)
+      throw new Error(
+        'Nenhum nó de captioning utilizável no ComfyUI.' + detail +
+        ' Instale o "WD14 Tagger" pelo ComfyUI Manager (com o modelo, ex.: wd-vit-large) e reinicie o ComfyUI.'
+      )
     }
 
     // Try each available captioning node
+    const attemptErrors: string[] = []
     for (const { nodeType, inputs: captionInputs } of possibleCaptionNodes) {
       console.log(`[ComfyUIClient] Tentando nó: ${nodeType}`)
       try {
@@ -397,13 +451,19 @@ export class ComfyUIClient {
           }
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : 'erro desconhecido'
         console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err)
+        attemptErrors.push(`${nodeType}: ${msg.slice(0, 220)}`)
         continue
       }
     }
 
     console.warn('[ComfyUIClient] Nenhum nó de captioning produziu resultado')
-    return { text: '' }
+    throw new Error(
+      `Extração falhou nos nós tentados (${possibleCaptionNodes.map((n) => n.nodeType).join(', ')}). ` +
+      `Detalhes: ${attemptErrors.join(' | ').slice(0, 500) || 'sem detalhes'}. ` +
+      'Abra o console do ComfyUI para ver o erro do nó (modelo do tagger ausente é a causa mais comum após update — baixe o modelo no Manager e reinicie).'
+    )
   }
 
   async extractPose(inputFilename: string): Promise<{ openposeJson: string }> {

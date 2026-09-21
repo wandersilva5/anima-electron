@@ -105,17 +105,20 @@ export function parseTags(raw: string): ParsedVisualElements {
   }
 
   for (const tag of unique) {
-    // Subject & Gender
+    // Subject & Gender — a contagem (solo / 1girl / 1boy / 2girls...) é
+    // trava anti-duplicação na recriação: nunca descartar.
     if (/^(1girl|female|girl|woman|lady|heroine|waifu)$/i.test(tag)) {
       elements.subject.push('female')
+      if (/^1girl$/i.test(tag)) elements.subject.push('solo')
     } else if (/^(1boy|male|boy|man|guy|hero)$/i.test(tag)) {
       elements.subject.push('male')
-    } else if (/^(\d+\+?(girls|boys)|multiple girls|multiple boys|couple|group|crowd)$/i.test(tag)) {
+      if (/^1boy$/i.test(tag)) elements.subject.push('solo')
+    } else if (/^(\d+\+?(girls|boys)|multiple girls|multiple boys|couple|group|crowd|2girls|3girls|4girls|2boys|3boys)$/i.test(tag)) {
       elements.subject.push(tag)
     } else if (/^(catgirl|kitsune|fox girl|bunny girl|demon girl|angel girl|elf|monster girl|cyborg|android)$/i.test(tag)) {
       elements.subject.push(tag)
-    } else if (/^(solo)$/i.test(tag)) {
-      // solo is default, keep note
+    } else if (/^(solo|alone|single)$/i.test(tag)) {
+      elements.subject.push('solo')
     } else if (/^(no humans|scenery|landscape)$/i.test(tag)) {
       elements.subject.push('no humans')
     }
@@ -123,8 +126,9 @@ export function parseTags(raw: string): ParsedVisualElements {
     else if (/^(anime|manga|anime coloring|official art|cel shading|illustration|digital media|semi-realistic|realistic|3d|retro artstyle|lineart|monochrome|greyscale)$/i.test(tag)) {
       elements.style.push(tag)
     }
-    // Skin
-    else if (/skin|tan|pale|fair|freckle|mole/i.test(tag) && !/clothing|armor|suit/i.test(tag)) {
+    // Skin — word-boundary: "standing" contém "tan" mas NÃO é pele.
+    // \btan evita o roubo sem perder "tan", "tanned skin", "tanlines".
+    else if (/\bskin\b|\btan|\bpale\b|\bfair\b|\bfreckle|\bmole\b|\bburn\b|\bscar\b/i.test(tag) && !/clothing|armor|suit/i.test(tag)) {
       elements.skin.push(tag)
     }
     // Hair
@@ -145,8 +149,10 @@ export function parseTags(raw: string): ParsedVisualElements {
         elements.eyes.features.push(tag)
       }
     }
-    // Face details
-    else if (/glasses|eyepatch|mask|earrings|horns?|ears?|fangs?|makeup|lipstick|delicate|youthful/i.test(tag) && !/hair/i.test(tag)) {
+    // Face details — word-boundary: "ears?" sem \b roubava "footwear",
+    // "wears", "appears", "tears" (expressão). \bears?\b só casa "ears"
+    // como palavra ("animal ears"), nunca dentro de outra palavra.
+    else if (/\bglasses\b|\beyepatch\b|\bmask\b|\bearrings?\b|\bhorns?\b|\bears?\b|\banimal ears\b|\bcat ears\b|\bfox ears\b|\bfangs?\b|\bmakeup\b|\blipstick\b|\bdelicate\b|\byouthful\b/i.test(tag) && !/hair/i.test(tag)) {
       elements.face.push(tag)
     }
     // Expression / gaze — outer inclui direção do olhar e da cabeça.
@@ -180,21 +186,24 @@ export function parseTags(raw: string): ParsedVisualElements {
     else if (/jacket|coat|hoodie|shirt|t-shirt|\btee\b|blouse|sweater|cardigan|vest|tank|crop|halter|tube|camisole|\bbra\b|sports bra|swim top|bikini top|bandeau|strapless|racerback|push.?up|underwire|padded|molded|triangle|teardrop|sweetheart|keyhole|cutout|plunge|deep v|corset|bustier|collar|turtleneck|neckline|neck\b|cleavage|choker|\btop\b|cups?|armor|chestplate|breastplate|spaghetti|straps?|strings?|ties?|bows?|knots?|lace.?up|lacing|harness/i.test(tag) && !/thigh|leg\b|legs\b|knee|ankle|foot|boot|bottom|briefs|panties|panty|skirt|pants?\b/i.test(tag)) {
       elements.clothing.top.push(tag)
     }
-    // Clothing: Bottom — inclui íntima inferior, modelagem e cavas
-    else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag)) {
+    // Clothing: Bottom — inclui íntima inferior, modelagem e cavas.
+    // Guarda anti-roubo: tag de POSE que menciona coxa ("elbows on thighs",
+    // "hands on thighs") começa com membro superior — desce para pose.limbs.
+    else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
       elements.clothing.bottom.push(tag)
+    }
+    // Clothing: Accessories & Footwear — ANTES do catch-all ("footwear"
+    // contém "wear" e seria roubado para overall). Inclui footwear.
+    else if (/footwear|glove|fingerless|boots|knee boots|shoes|sneakers|heels|belt|buckles?|thigh straps|socks|thighhighs|kneehighs|jewelry|bracelet|necklace|cape|cloak|hat|cap|headband/i.test(tag)) {
+      elements.clothing.accessories.push(tag)
     }
     // Clothing: catch-all — detalhe de vestimenta/exposição/malha que escapou
     // acima cai aqui em vez de se perder em "uncategorized". Cobre fragmentos
     // longos das tabelas ("exposed hips", "small triangular front panel",
     // "smooth opaque stretch fabric", "sheer mesh sleeves", ...).
-    else if (/cloth|wear|attire|garment|sleeve|sleeveless|off.?shoulder|bare|nude|topless|bottomless|naked|exposed|see.?through|sheer|opaque|mesh|fabric|stretch|knit|lace|frill|plaid|striped|polka|floral|denim|leather|silk|satin|fishnet|garter|maid|miko|shrug|sarong|pareo|cover.?up|midriff|navel|panel|seam|trim|band|waist|cut|coverage|rise|collar|turtleneck|neckline|silhouette|fitted|minimalist|color.?block|athletic/i.test(tag)) {
+    // Guarda: calçado já foi capturado em accessories acima.
+    else if (/cloth|wear|attire|garment|sleeve|sleeveless|off.?shoulder|bare|nude|topless|bottomless|naked|exposed|see.?through|sheer|opaque|mesh|fabric|stretch|knit|lace|frill|plaid|striped|polka|floral|denim|leather|silk|satin|fishnet|garter|maid|miko|shrug|sarong|pareo|cover.?up|midriff|navel|panel|seam|trim|band|waist|cut|coverage|rise|collar|turtleneck|neckline|silhouette|fitted|minimalist|color.?block|athletic/i.test(tag) && !/footwear|shoes|sneakers|boots/i.test(tag)) {
       elements.clothing.overall.push(tag)
-    }
-    // Clothing: Accessories & Footwear (enxuto — só calçado/adereço real;
-    // tiras da própria roupa já foram capturadas em top/bottom acima)
-    else if (/glove|fingerless|boots|knee boots|shoes|sneakers|heels|belt|buckles?|thigh straps|socks|thighhighs|kneehighs|jewelry|bracelet|necklace|cape|cloak|hat|cap|headband/i.test(tag)) {
-      elements.clothing.accessories.push(tag)
     }
     // Pose: costas / bumbum levantado / olhar por cima do ombro.
     // Só ação do corpo aqui — ponto de vista ("from behind", "rear view")
@@ -206,8 +215,10 @@ export function parseTags(raw: string): ParsedVisualElements {
         elements.pose.limbs.push(tag)
       }
     }
-    // Pose: Limbs & Stance
-    else if (/leg|arm|hand|foot|feet|kneel|crouch|squat|sit|stand|jump|lean|spread legs|legs apart|bent|stretch|reaching|crossed|lift|raised|arch|twist|contrapposto/i.test(tag)) {
+    // Pose: Limbs & Stance — word-boundary: "leg|arm|..." sem \b roubava
+    // "warm colors" (arm), "charm", "farmscape". Vocabulário expandido com
+    // tags reais do WD14 (standing on one leg, arms up, leg up, etc.).
+    else if (/\blegs?\b|\barms?\b|\bhands?\b|\bknees?\b|\belbows?\b|\bfeet\b|\bfoot\b|\bkneel(?:ing|s)?\b|\bcrouch(?:ing|ed)?\b|\bsquat(?:ting)?\b|\bsit(?:ting)?\b|\bstand(?:ing|on one leg)?\b|\bstanding on one leg\b|\bjump(?:ing)?\b|\blean(?:ing)?\b|\bspread legs\b|\blegs apart\b|\bfeet apart\b|\bfeet together\b|\bknees? (together|apart)\b|\bbent\b|\bstretch(?:ing|ed)?\b|\breaching\b|\bcrossed\b|\bcross-legged\b|\blift(?:ed|ing)?\b|\braised\b|\barch(?:ed|ing)?\b|\btwist(?:ed|ing)?\b|\bcontrapposto\b|\barms up\b|\bleg up\b|\bone leg\b|\bhands on hips\b|\bhands? in pockets?\b|\bhands? together\b|\bclasped hands?\b|\bhand on (chin|cheek|face)\b|\barms behind\b|\belbows? on (knees?|thighs?)\b|\bly(?:ing)?\b|\blie\b|\bleaning forward\b|\bbending\b|\bsitting\b|\bwalking\b|\brunning\b|\bwaving\b/i.test(tag)) {
       elements.pose.limbs.push(tag)
     }
     // Pose: General
@@ -286,9 +297,11 @@ function capitalize(s: string): string {
 export function synthesizeDescriptiveCaption(raw: string): string {
   if (!raw || !raw.trim()) return ''
 
-  // Se já for linguagem natural ou possuir as seções, devolve limpo
+  // Se já for linguagem natural ou possuir as seções, garante a trava de
+  // contagem (principal causa de duplicação na recriação: VLM descreve sem
+  // dizer "uma personagem só" e o modelo gera duas).
   if (isAlreadyNaturalLanguage(raw)) {
-    return raw.trim()
+    return ensureSubjectCountLock(raw.trim())
   }
 
   const el = parseTags(raw)
@@ -296,8 +309,14 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   // 1. Identifica o Sujeito e Estilo
   const isFemale = el.subject.includes('female') || el.subject.some((s) => /girl|woman|waifu/i.test(s))
   const isMale = el.subject.includes('male') || el.subject.some((s) => /boy|man|guy/i.test(s))
-  const isMultiple = el.subject.some((s) => /multiple|group|couple|\d+\+/i.test(s))
+  const isMultiple = el.subject.some((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s))
   const isNoHumans = el.subject.includes('no humans')
+  // Detecta múltiplos quando ambos os gêneros estão presentes sem marcadores explícitos.
+  // Isso acontece quando "girl" e "boy" aparecem juntos (ex.: "a boy and a girl").
+  const isMultipleGenders = isFemale && isMale && !isMultiple
+  // Sem marcador de múltiplos = personagem única (padrão da aba Recriar).
+  // "solo" aqui inclui 1girl/1boy, que o parse preserva como 'solo'.
+  const isSolo = !isMultipleGenders && !isMultiple && !isNoHumans
 
   let genderStr = 'female'
   let pronoun = 'she'
@@ -306,6 +325,10 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     genderStr = 'male'
     pronoun = 'he'
     possessive = 'his'
+  } else if (isMultipleGenders) {
+    genderStr = 'multiple'
+    pronoun = 'they'
+    possessive = 'their'
   } else if (isMultiple) {
     genderStr = 'multiple'
     pronoun = 'they'
@@ -313,7 +336,31 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   }
 
   const styleStr = el.style.length > 0 ? el.style.join('/') : 'anime/manga'
-  const poseBrief = el.pose.general.length > 0 ? el.pose.general[0] : 'dynamic and expressive'
+  // Header: deriva atitude + postura dos limbs quando não há "general",
+  // para não cair sempre no genérico "dynamic and expressive".
+  const attitudeWord = (() => {
+    const all = [...el.expression, ...el.pose.general].join(' ').toLowerCase()
+    if (/defiant|determined|confident|serious|angry|fierce|powerful/.test(all)) return 'defiant'
+    if (/playful|cheerful|smile|grin|smirk/.test(all)) return 'confident'
+    if (/shy|timid|blush|soft|calm/.test(all)) return 'graceful'
+    return 'dynamic'
+  })()
+  const stanceWord = (() => {
+    const limbs = el.pose.limbs.join(' ').toLowerCase()
+    if (/\bkneel/.test(limbs)) return 'kneeling'
+    if (/\bsit/.test(limbs)) return 'seated'
+    if (/\bly\b|\blie\b|\blying\b/.test(limbs)) return 'reclined'
+    if (/\bcrouch|\bsquat/.test(limbs)) return 'crouched'
+    if (/\blean|\bbend/.test(limbs)) return 'leaning'
+    if (/\bstand|\bone leg\b|\bleg up\b/.test(limbs)) return 'standing'
+    if (/\bwalk|\brun\b/.test(limbs)) return 'in motion'
+    return ''
+  })()
+  const poseBrief = el.pose.general.length > 0
+    ? el.pose.general[0]
+    : stanceWord
+      ? `${attitudeWord} and ${stanceWord}`
+      : `${attitudeWord} and expressive`
   const poseNoun = poseBrief.toLowerCase().endsWith('pose') ? poseBrief : `${poseBrief} pose`
   const envBrief = el.scenery.background.length > 0
     ? el.scenery.background.slice(0, 2).join(' or ')
@@ -328,14 +375,37 @@ export function synthesizeDescriptiveCaption(raw: string): string {
       : ''
   const angleClause = angleBrief ? `, ${angleBrief}` : ''
 
-  // Header
+  // Header — a contagem é persistida no prompt POSITIVO (nunca no negativo,
+  // que quebraria referências com 2+ personagens, ex.: duas meninas se
+  // beijando). Redundância intencional: difusão duplica a personagem se o
+  // singular vier apenas do artigo "a".
+  const subjectCountLock = isSolo
+    ? 'solo, single character, alone in frame (exactly ONE person, no second person, no crowd, no duplicate)'
+    : ''
+  // Contagem exata para múltiplos: "2girls" → TWO, "couple" → TWO, etc.
+  const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? 'multiple characters'
+  const countWords = /2girls|2boys|couple/i.test(countDetail)
+    ? 'TWO'
+    : /3girls|3boys/i.test(countDetail)
+      ? 'THREE'
+      : /4girls/i.test(countDetail)
+        ? 'FOUR'
+        : null
+  // boy+girl sem marcador explícito = casal = TWO (caso "um rapaz e uma garota").
+  const isMulti = isMultiple || isMultipleGenders
+  const effCountDetail = isMultipleGenders && !isMultiple ? 'couple (male + female)' : countDetail
+  const effCountWords: string | null = isMultipleGenders && !isMultiple ? 'TWO' : countWords
+  const effPeopleWords = effCountWords === 'TWO' ? 'two people' : effCountWords === null ? 'people' : effCountWords.toLowerCase() + ' people'
+  const effMultipleLock = effCountWords
+    ? 'exactly ' + effCountWords + ' characters (' + effCountDetail + '), ' + effPeopleWords + ' in frame — keep this exact count, no more, no fewer, no extra people'
+    : 'multiple characters (' + effCountDetail + ') — keep this exact character count and arrangement, no extra people beyond those described'
   let intro = ''
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`
-  } else if (isMultiple) {
-    intro = `The image depicts ${styleStr} characters in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`
+  } else if (isMulti) {
+    intro = `The image depicts ${styleStr} characters, ${effMultipleLock}, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`
   } else {
-    intro = `The image depicts a ${genderStr} ${styleStr} character in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`
+    intro = `The image depicts a single ${genderStr} ${styleStr} character, ${subjectCountLock}, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`
   }
 
   const sections: string[] = [intro, '']
@@ -343,6 +413,13 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   // 2. Seção Character (se houver personagem)
   if (!isNoHumans) {
     sections.push('Character:')
+    // Trava explícita de contagem logo no topo da seção — o ponto que o
+    // usuário edita antes de recriar, então precisa estar visível aqui.
+    if (isSolo) {
+      sections.push('Subject Count: Solo — exactly ONE character in frame, single subject centered; no second person, no crowd, no duplicate.')
+    } else if (isMulti) {
+      sections.push('Subject Count: ' + (effCountWords ? effCountWords + ' (' + effCountDetail + ')' : 'Multiple (' + effCountDetail + ')') + ' — ' + effMultipleLock + '.')
+    }
 
     // Appearance
     const skinDesc = el.skin.length > 0 ? el.skin.join(', ') : 'fair skin'
@@ -383,7 +460,8 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     if (clothingParts.length > 0) {
       const outfitLiteral = clothingParts.join(', ')
       const outfitWithArticle = /^(a|an|the)\s/i.test(outfitLiteral) ? outfitLiteral : `a ${outfitLiteral}`
-      sections.push(`Clothing: ${capitalize(pronoun)} wears ${outfitWithArticle}.`)
+      const wearVerb = pronoun === 'they' ? 'wear' : 'wears'
+      sections.push(`Clothing: ${capitalize(pronoun)} ${wearVerb} ${outfitWithArticle}.`)
     } else if (/nude|naked|topless|bottomless|no bra|no panties/i.test(raw)) {
       sections.push(`Clothing: ${capitalize(pronoun)} appears nude / without visible clothing.`)
     } else {
@@ -404,26 +482,99 @@ export function synthesizeDescriptiveCaption(raw: string): string {
       sections.push(`Accessories: ${capitalize(acc.join(', '))}.`)
     }
 
-    // Pose — fidelidade máxima: texto literal das tags, sem adjetivo inventado.
-    // Sem "general" detectado, não se alega postura ("commanding and poised"
-    // desviaria a geração); descreve-se só o que foi visto.
+    // Pose — padrão do modelo de exemplo: verbo de postura + mecânica do
+    // corpo (pernas, tronco, braços) + orientação do olhar + atitude.
+    // Ex.: "assumes a dynamic and defiant kneeling stance — weight settled
+    // low, arms raised overhead, torso upright, gaze directed at the viewer".
     const cameraIsBehind = el.camera.angle.some((a) => /behind|rear|back|over.?shoulder/i.test(a))
     const defaultOrient = cameraIsBehind
-      ? ', with her back turned to the viewer'
+      ? `, with ${possessive} back turned to the viewer`
       : ''
-    const poseLimbs = el.pose.limbs.length > 0 ? el.pose.limbs.join(', ') : ''
     const poseOrient = el.pose.orientation.length > 0 ? el.pose.orientation.join(', ') : ''
+    const limbsLower = el.pose.limbs.map((l) => l.toLowerCase())
+    const has = (re: RegExp) => limbsLower.some((l) => re.test(l))
+    const mechanics: string[] = []
+    if (has(/\bstanding on one leg\b|\bone leg\b|\bleg up\b/)) {
+      mechanics.push(`weight shifted onto one leg with the other lifted`)
+    } else if (has(/\bspread legs\b|\blegs apart\b/)) {
+      mechanics.push(`legs set apart for balance`)
+    } else if (has(/\bkneel/)) {
+      mechanics.push(`weight settled low on bent knees`)
+    } else if (has(/\bsit/)) {
+      mechanics.push(`weight settled in a seated position`)
+    } else if (has(/\bcrouch|\bsquat/)) {
+      mechanics.push(`body lowered into a compact crouch`)
+    } else if (has(/\bly\b|\blie\b|\blying\b/)) {
+      mechanics.push(`body extended in a reclined position`)
+    } else if (has(/\bstand/)) {
+      mechanics.push(`standing upright with balanced weight`)
+    }
+    if (has(/\barms up\b|\braised\b|\bhands? up\b/)) {
+      mechanics.push(`arms raised overhead`)
+    } else if (has(/\barms behind\b|\bbehind (head|back)\b/)) {
+      mechanics.push(`arms drawn behind ${possessive} head`)
+    } else if (has(/\bhands on hips\b/)) {
+      mechanics.push(`hands resting on ${possessive} hips`)
+    } else if (has(/\bhands? in pockets?\b/)) {
+      mechanics.push(`hands tucked into pockets`)
+    } else if (has(/\b(hands? together|clasped hands?|fingers interlocked)\b/)) {
+      mechanics.push(`hands clasped together`)
+    } else if (has(/\bhand on (chin|cheek|face)\b/)) {
+      mechanics.push(`one hand resting against ${possessive} chin`)
+    } else if (has(/\bwaving\b/)) {
+      mechanics.push(`one hand raised in a wave`)
+    } else if (has(/\barms?\b|\bhands?\b/) && !has(/\bkneel|\bsit|\bstand|\bleg\b|\bfoot\b|\bfeet\b|\bknee\b|\belbow\b/)) {
+      mechanics.push(`arms positioned expressively`)
+    }
+    if (has(/\bknees? together\b/)) {
+      mechanics.push(`knees held together`)
+    } else if (has(/\bknees? apart\b/)) {
+      mechanics.push(`knees set apart`)
+    }
+    if (has(/\bfeet apart\b/)) {
+      mechanics.push(`feet set apart`)
+    } else if (has(/\bfeet together\b/)) {
+      mechanics.push(`feet placed together`)
+    }
+    if (has(/\belbows? on (knees?|thighs?)\b/)) {
+      mechanics.push(`elbows braced on ${possessive} knees`)
+    }
+    if (has(/\bleaning forward\b|\bbent over\b|\bbending\b/)) {
+      mechanics.push(`torso inclined forward`)
+    } else if (has(/\barch\b/)) {
+      mechanics.push(`back arched to emphasize the silhouette`)
+    } else if (has(/\btwist\b|\bcontrapposto\b/)) {
+      mechanics.push(`torso twisted with contrapposto shift`)
+    }
+    if (has(/\barms crossed\b|\bcrossed arms\b/)) {
+      mechanics.push(`arms crossed over chest`)
+    } else if (has(/\blegs crossed\b|\bcrossed legs\b|\bcross-legged\b/)) {
+      mechanics.push(`legs crossed`)
+    } else if (has(/\bcrossed\b/)) {
+      mechanics.push(`limbs crossed`)
+    }
+    const literalLeftovers = el.pose.limbs.filter((l) => {
+      const ll = l.toLowerCase()
+      return !/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll)
+    })
+    for (const left of literalLeftovers.slice(0, 2)) {
+      mechanics.push(left)
+    }
+    const orientClause = poseOrient ? `, ${poseOrient}` : defaultOrient
+    // Trava de pose: a aba Recriar parte de img2img, mas com denoise alto o
+    // modelo reinterpreta a postura — a instrução explícita ancora a pose.
+    const poseKeepLock = 'Match the reference pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.'
     if (el.pose.general.length > 0) {
-      const limbsPart = poseLimbs ? ` with ${poseLimbs}` : ''
-      const orientPart = poseOrient ? `, ${poseOrient}` : defaultOrient
-      sections.push(`Pose: The character assumes a ${el.pose.general.join(', ')} stance${limbsPart}${orientPart}.`)
-    } else if (poseLimbs || poseOrient) {
-      const parts = [poseLimbs, poseOrient].filter(Boolean).join(', ')
-      sections.push(`Pose: The character is shown with ${parts}${!poseOrient ? defaultOrient : ''}.`)
+      const mechPart = mechanics.length > 0 ? ` — ${mechanics.join(', ')}` : ''
+      sections.push(`Pose: The character assumes a ${el.pose.general.join(', ')} stance${mechPart}${orientClause}, conveying a ${attitudeWord} attitude. ${poseKeepLock}`)
+    } else if (mechanics.length > 0 || poseOrient) {
+      const mechPart = mechanics.length > 0 ? mechanics.join(', ') : poseOrient
+      const extraOrient = mechanics.length > 0 ? orientClause : ''
+      sections.push(`Pose: The character assumes a ${attitudeWord} ${stanceWord || 'standing'} stance — ${mechPart}${extraOrient}, conveying poise and intent. ${poseKeepLock}`)
     } else if (cameraIsBehind) {
-      sections.push(`Pose: The character is shown with her back turned to the viewer.`)
+      sections.push(`Pose: The character is shown with ${possessive} back turned to the viewer, in a ${attitudeWord} stance. ${poseKeepLock}`)
     } else {
-      sections.push(`Pose: The character is shown in a natural relaxed posture facing the viewer.`)
+      sections.push(`Pose: The character holds a ${attitudeWord} stance facing the viewer, with relaxed arms at ${possessive} sides and even weight distribution. ${poseKeepLock}`)
     }
 
     // Expression
@@ -496,9 +647,30 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     sections.push(`Composition: Framed as a ${shotDetails}, positioning the subject in the visual center with balanced proportions against the backdrop.`)
   } else if (compDetails) {
     sections.push(`Composition: Framed from a ${compDetails}, directing the viewer's gaze toward the focal center and creating a striking visual impression.`)
+  } else if (isSolo) {
+    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, only one character in frame, no extra people, delivering a dynamic and impactful presentation.`)
+  } else if (isMulti) {
+    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : 'multiple'} subjects share the center with balanced framing and depth, ${effMultipleLock}, delivering a dynamic and impactful presentation.`)
   } else {
     sections.push(`Composition: The main subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`)
   }
 
   return sections.join('\n')
+}
+
+/**
+ * Garante travas de fidelidade em captions já em linguagem natural (VLM como
+ * Florence2/JoyCaption): se o texto não menciona quantidade, anexa a
+ * instrução de manter o mesmo número de personagens — com padrão solo,
+ * que é o caso mais comum da aba Recriar e o que mais duplica — e a
+ * instrução de manter a pose, que o VLM costuma descrever de forma vaga.
+ */
+export function ensureSubjectCountLock(text: string): string {
+  const t = text.trim()
+  if (!t) return ''
+  if (/no humans|no person|empty scene|no character/i.test(t)) return t
+  if (/\bsolo\b|\bsingle\b|\balone in frame\b|\bonly one\b|\bexactly one\b|\b1girl\b|\b1boy\b|\bmultiple\b|\btwo\b|\bthree\b|\bcouple\b|\bgroup\b|\bcrowd\b|\b2girls\b|\b3girls\b|\b2boys\b/i.test(t)) {
+    return t
+  }
+  return `${t}\nSubject Count: keep the exact same number of characters as the reference image — if it shows a single character, render only ONE person, solo and alone in frame, no second person, no crowd, no duplicate.\nPose: match the reference image pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.`
 }

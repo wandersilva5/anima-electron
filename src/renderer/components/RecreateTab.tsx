@@ -19,7 +19,7 @@ export function RecreateTab() {
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>(savedSettings.diffusionModel ?? 'anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(savedSettings.checkpoint ?? '')
   const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
-  const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.85)
+  const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.65)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
   const [caption, setCaption] = useState(savedSettings.prompt ?? '')
@@ -386,11 +386,10 @@ export function RecreateTab() {
                   <button
                     type="button"
                     onClick={() => setCaptionMode('descriptive')}
-                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${
-                      captionMode === 'descriptive'
+                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${captionMode === 'descriptive'
                         ? 'bg-accent text-white shadow-xs'
                         : 'text-text-muted hover:text-text-primary'
-                    }`}
+                      }`}
                     title="Gera uma descrição rica e estruturada em prosa natural"
                   >
                     Descritivo
@@ -398,11 +397,10 @@ export function RecreateTab() {
                   <button
                     type="button"
                     onClick={() => setCaptionMode('tags')}
-                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${
-                      captionMode === 'tags'
+                    className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${captionMode === 'tags'
                         ? 'bg-accent text-white shadow-xs'
                         : 'text-text-muted hover:text-text-primary'
-                    }`}
+                      }`}
                     title="Gera lista de tags organizadas (formato Danbooru)"
                   >
                     Tags
@@ -431,11 +429,10 @@ export function RecreateTab() {
                   type="button"
                   onClick={handleExtractCaption}
                   disabled={!originalSrc || captioning || generating || !status.online}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    !originalSrc || captioning || generating || !status.online
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${!originalSrc || captioning || generating || !status.online
                       ? 'bg-surface-tertiary text-text-muted cursor-not-allowed opacity-60'
                       : 'bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30'
-                  }`}
+                    }`}
                   title="Extrai a descrição da imagem no formato selecionado sem iniciar geração"
                 >
                   {captioning ? (
@@ -478,8 +475,8 @@ export function RecreateTab() {
                   <Sparkles size={10} className="text-accent shrink-0" />
                   <span className="text-[10px] text-text-muted">
                     {captionMode === 'descriptive'
-                      ? 'Descrição descritiva estruturada gerada. Edite ou use em outras criações.'
-                      : 'Lista de tags gerada. Edite se necessário.'}
+                      ? 'Confira o "Subject Count" (solo = 1 personagem). Ajuste se a quantidade estiver errada.'
+                      : 'Confira se começa com "solo" (1 personagem) ou a contagem certa. Ajuste se necessário.'}
                   </span>
                 </div>
               )}

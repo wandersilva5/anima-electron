@@ -20,7 +20,7 @@ export function ImageImprove() {
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(savedSettings.checkpoint ?? '')
   const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
   const [prompt, setPrompt] = useState(savedSettings.prompt ?? '')
-  const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.85)
+  const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.7)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -42,7 +42,7 @@ export function ImageImprove() {
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setTabLoras(newLoras)
       setSelectedLoras((prev) => prev.filter((sel) => newLoras.some((l) => l.name === sel.name)))
-    }).catch(() => {})
+    }).catch(() => { })
   }, [selectedModel, setSelectedLoras])
 
   // Persiste as configurações da aba sempre que mudam
@@ -286,11 +286,10 @@ export function ImageImprove() {
                       brushRef.current?.clearMask()
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                    brushMode
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${brushMode
                       ? 'bg-accent/20 text-accent border border-accent/30'
                       : 'bg-surface-tertiary hover:bg-border text-text-secondary hover:text-text-primary'
-                  }`}
+                    }`}
                 >
                   {brushMode ? <X size={14} /> : <Paintbrush size={14} />}
                   {brushMode ? 'Sair do Pincel' : 'Marcar Área'}

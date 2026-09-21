@@ -60,18 +60,21 @@ function parseTags(raw) {
   for (const tag of unique) {
     if (/^(1girl|female|girl|woman|lady|heroine|waifu)$/i.test(tag)) {
       elements.subject.push("female");
+      if (/^1girl$/i.test(tag)) elements.subject.push("solo");
     } else if (/^(1boy|male|boy|man|guy|hero)$/i.test(tag)) {
       elements.subject.push("male");
-    } else if (/^(\d+\+?(girls|boys)|multiple girls|multiple boys|couple|group|crowd)$/i.test(tag)) {
+      if (/^1boy$/i.test(tag)) elements.subject.push("solo");
+    } else if (/^(\d+\+?(girls|boys)|multiple girls|multiple boys|couple|group|crowd|2girls|3girls|4girls|2boys|3boys)$/i.test(tag)) {
       elements.subject.push(tag);
     } else if (/^(catgirl|kitsune|fox girl|bunny girl|demon girl|angel girl|elf|monster girl|cyborg|android)$/i.test(tag)) {
       elements.subject.push(tag);
-    } else if (/^(solo)$/i.test(tag)) ;
-    else if (/^(no humans|scenery|landscape)$/i.test(tag)) {
+    } else if (/^(solo|alone|single)$/i.test(tag)) {
+      elements.subject.push("solo");
+    } else if (/^(no humans|scenery|landscape)$/i.test(tag)) {
       elements.subject.push("no humans");
     } else if (/^(anime|manga|anime coloring|official art|cel shading|illustration|digital media|semi-realistic|realistic|3d|retro artstyle|lineart|monochrome|greyscale)$/i.test(tag)) {
       elements.style.push(tag);
-    } else if (/skin|tan|pale|fair|freckle|mole/i.test(tag) && !/clothing|armor|suit/i.test(tag)) {
+    } else if (/\bskin\b|\btan|\bpale\b|\bfair\b|\bfreckle|\bmole\b|\bburn\b|\bscar\b/i.test(tag) && !/clothing|armor|suit/i.test(tag)) {
       elements.skin.push(tag);
     } else if (/hair|bangs|twintails|pigtails|ponytail|braid|bun|ahoge|bob cut|sidelocks|forehead/i.test(tag)) {
       if (/black|blonde|brown|blue|red|pink|white|silver|green|purple|grey|gray|multicolor|gradient|two-tone|streak/i.test(tag)) {
@@ -87,7 +90,7 @@ function parseTags(raw) {
       } else {
         elements.eyes.features.push(tag);
       }
-    } else if (/glasses|eyepatch|mask|earrings|horns?|ears?|fangs?|makeup|lipstick|delicate|youthful/i.test(tag) && !/hair/i.test(tag)) {
+    } else if (/\bglasses\b|\beyepatch\b|\bmask\b|\bearrings?\b|\bhorns?\b|\bears?\b|\banimal ears\b|\bcat ears\b|\bfox ears\b|\bfangs?\b|\bmakeup\b|\blipstick\b|\bdelicate\b|\byouthful\b/i.test(tag) && !/hair/i.test(tag)) {
       elements.face.push(tag);
     } else if (/smile|grin|smirk|blush|frown|cry|tear|sweat|angry|serious|confident|defiant|determined|open mouth|parted lips|tongue|gaze|looking|glance|stare|facing|head (down|up|tilt)|side profile/i.test(tag) && !/view|angle|focus|shot|portrait|full body|upper body|lower body|cowboy/i.test(tag)) {
       if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
@@ -101,19 +104,19 @@ function parseTags(raw) {
       elements.clothing.overall.push(tag);
     } else if (/jacket|coat|hoodie|shirt|t-shirt|\btee\b|blouse|sweater|cardigan|vest|tank|crop|halter|tube|camisole|\bbra\b|sports bra|swim top|bikini top|bandeau|strapless|racerback|push.?up|underwire|padded|molded|triangle|teardrop|sweetheart|keyhole|cutout|plunge|deep v|corset|bustier|collar|turtleneck|neckline|neck\b|cleavage|choker|\btop\b|cups?|armor|chestplate|breastplate|spaghetti|straps?|strings?|ties?|bows?|knots?|lace.?up|lacing|harness/i.test(tag) && !/thigh|leg\b|legs\b|knee|ankle|foot|boot|bottom|briefs|panties|panty|skirt|pants?\b/i.test(tag)) {
       elements.clothing.top.push(tag);
-    } else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag)) {
+    } else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
       elements.clothing.bottom.push(tag);
-    } else if (/cloth|wear|attire|garment|sleeve|sleeveless|off.?shoulder|bare|nude|topless|bottomless|naked|exposed|see.?through|sheer|opaque|mesh|fabric|stretch|knit|lace|frill|plaid|striped|polka|floral|denim|leather|silk|satin|fishnet|garter|maid|miko|shrug|sarong|pareo|cover.?up|midriff|navel|panel|seam|trim|band|waist|cut|coverage|rise|collar|turtleneck|neckline|silhouette|fitted|minimalist|color.?block|athletic/i.test(tag)) {
-      elements.clothing.overall.push(tag);
-    } else if (/glove|fingerless|boots|knee boots|shoes|sneakers|heels|belt|buckles?|thigh straps|socks|thighhighs|kneehighs|jewelry|bracelet|necklace|cape|cloak|hat|cap|headband/i.test(tag)) {
+    } else if (/footwear|glove|fingerless|boots|knee boots|shoes|sneakers|heels|belt|buckles?|thigh straps|socks|thighhighs|kneehighs|jewelry|bracelet|necklace|cape|cloak|hat|cap|headband/i.test(tag)) {
       elements.clothing.accessories.push(tag);
+    } else if (/cloth|wear|attire|garment|sleeve|sleeveless|off.?shoulder|bare|nude|topless|bottomless|naked|exposed|see.?through|sheer|opaque|mesh|fabric|stretch|knit|lace|frill|plaid|striped|polka|floral|denim|leather|silk|satin|fishnet|garter|maid|miko|shrug|sarong|pareo|cover.?up|midriff|navel|panel|seam|trim|band|waist|cut|coverage|rise|collar|turtleneck|neckline|silhouette|fitted|minimalist|color.?block|athletic/i.test(tag) && !/footwear|shoes|sneakers|boots/i.test(tag)) {
+      elements.clothing.overall.push(tag);
     } else if (/facing away|turned away|looking back|looking over|over shoulder|glance back|bent over|bending over|leaning forward|arched back|arching|arch back|\bass\b|\bbutt\b|buttocks|booty|ass up|butt lift|butt up|hips up|raised hips|presenting|on all fours/i.test(tag)) {
       if (/looking|glance|over shoulder|facing away|turned away/i.test(tag)) {
         elements.pose.orientation.push(tag);
       } else {
         elements.pose.limbs.push(tag);
       }
-    } else if (/leg|arm|hand|foot|feet|kneel|crouch|squat|sit|stand|jump|lean|spread legs|legs apart|bent|stretch|reaching|crossed|lift|raised|arch|twist|contrapposto/i.test(tag)) {
+    } else if (/\blegs?\b|\barms?\b|\bhands?\b|\bknees?\b|\belbows?\b|\bfeet\b|\bfoot\b|\bkneel(?:ing|s)?\b|\bcrouch(?:ing|ed)?\b|\bsquat(?:ting)?\b|\bsit(?:ting)?\b|\bstand(?:ing|on one leg)?\b|\bstanding on one leg\b|\bjump(?:ing)?\b|\blean(?:ing)?\b|\bspread legs\b|\blegs apart\b|\bfeet apart\b|\bfeet together\b|\bknees? (together|apart)\b|\bbent\b|\bstretch(?:ing|ed)?\b|\breaching\b|\bcrossed\b|\bcross-legged\b|\blift(?:ed|ing)?\b|\braised\b|\barch(?:ed|ing)?\b|\btwist(?:ed|ing)?\b|\bcontrapposto\b|\barms up\b|\bleg up\b|\bone leg\b|\bhands on hips\b|\bhands? in pockets?\b|\bhands? together\b|\bclasped hands?\b|\bhand on (chin|cheek|face)\b|\barms behind\b|\belbows? on (knees?|thighs?)\b|\bly(?:ing)?\b|\blie\b|\bleaning forward\b|\bbending\b|\bsitting\b|\bwalking\b|\brunning\b|\bwaving\b/i.test(tag)) {
       elements.pose.limbs.push(tag);
     } else if (/pose|dynamic pose|wide pose|action|stance|fighting|floating|flying|walking|running|position/i.test(tag)) {
       elements.pose.general.push(tag);
@@ -151,13 +154,15 @@ function capitalize(s) {
 function synthesizeDescriptiveCaption(raw) {
   if (!raw || !raw.trim()) return "";
   if (isAlreadyNaturalLanguage(raw)) {
-    return raw.trim();
+    return ensureSubjectCountLock(raw.trim());
   }
   const el = parseTags(raw);
   const isFemale = el.subject.includes("female") || el.subject.some((s) => /girl|woman|waifu/i.test(s));
   const isMale = el.subject.includes("male") || el.subject.some((s) => /boy|man|guy/i.test(s));
-  const isMultiple = el.subject.some((s) => /multiple|group|couple|\d+\+/i.test(s));
+  const isMultiple = el.subject.some((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s));
   const isNoHumans = el.subject.includes("no humans");
+  const isMultipleGenders = isFemale && isMale && !isMultiple;
+  const isSolo = !isMultipleGenders && !isMultiple && !isNoHumans;
   let genderStr = "female";
   let pronoun = "she";
   let possessive = "her";
@@ -165,28 +170,63 @@ function synthesizeDescriptiveCaption(raw) {
     genderStr = "male";
     pronoun = "he";
     possessive = "his";
+  } else if (isMultipleGenders) {
+    genderStr = "multiple";
+    pronoun = "they";
+    possessive = "their";
   } else if (isMultiple) {
     genderStr = "multiple";
     pronoun = "they";
     possessive = "their";
   }
   const styleStr = el.style.length > 0 ? el.style.join("/") : "anime/manga";
-  const poseBrief = el.pose.general.length > 0 ? el.pose.general[0] : "dynamic and expressive";
+  const attitudeWord = (() => {
+    const all = [...el.expression, ...el.pose.general].join(" ").toLowerCase();
+    if (/defiant|determined|confident|serious|angry|fierce|powerful/.test(all)) return "defiant";
+    if (/playful|cheerful|smile|grin|smirk/.test(all)) return "confident";
+    if (/shy|timid|blush|soft|calm/.test(all)) return "graceful";
+    return "dynamic";
+  })();
+  const stanceWord = (() => {
+    const limbs = el.pose.limbs.join(" ").toLowerCase();
+    if (/\bkneel/.test(limbs)) return "kneeling";
+    if (/\bsit/.test(limbs)) return "seated";
+    if (/\bly\b|\blie\b|\blying\b/.test(limbs)) return "reclined";
+    if (/\bcrouch|\bsquat/.test(limbs)) return "crouched";
+    if (/\blean|\bbend/.test(limbs)) return "leaning";
+    if (/\bstand|\bone leg\b|\bleg up\b/.test(limbs)) return "standing";
+    if (/\bwalk|\brun\b/.test(limbs)) return "in motion";
+    return "";
+  })();
+  const poseBrief = el.pose.general.length > 0 ? el.pose.general[0] : stanceWord ? `${attitudeWord} and ${stanceWord}` : `${attitudeWord} and expressive`;
   const poseNoun = poseBrief.toLowerCase().endsWith("pose") ? poseBrief : `${poseBrief} pose`;
   const envBrief = el.scenery.background.length > 0 ? el.scenery.background.slice(0, 2).join(" or ") : el.scenery.environment.length > 0 ? el.scenery.environment[0] : "atmospheric setting";
   const angleBrief = el.camera.angle.length > 0 ? `captured from a ${el.camera.angle[0]}` : el.camera.shotType.length > 0 ? `framed in a ${el.camera.shotType[0]}` : "";
   const angleClause = angleBrief ? `, ${angleBrief}` : "";
+  const subjectCountLock = isSolo ? "solo, single character, alone in frame (exactly ONE person, no second person, no crowd, no duplicate)" : "";
+  const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? "multiple characters";
+  const countWords = /2girls|2boys|couple/i.test(countDetail) ? "TWO" : /3girls|3boys/i.test(countDetail) ? "THREE" : /4girls/i.test(countDetail) ? "FOUR" : null;
+  const isMulti = isMultiple || isMultipleGenders;
+  const effCountDetail = isMultipleGenders && !isMultiple ? "couple (male + female)" : countDetail;
+  const effCountWords = isMultipleGenders && !isMultiple ? "TWO" : countWords;
+  const effPeopleWords = effCountWords === "TWO" ? "two people" : effCountWords === null ? "people" : effCountWords.toLowerCase() + " people";
+  const effMultipleLock = effCountWords ? "exactly " + effCountWords + " characters (" + effCountDetail + "), " + effPeopleWords + " in frame — keep this exact count, no more, no fewer, no extra people" : "multiple characters (" + effCountDetail + ") — keep this exact character count and arrangement, no extra people beyond those described";
   let intro = "";
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`;
-  } else if (isMultiple) {
-    intro = `The image depicts ${styleStr} characters in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`;
+  } else if (isMulti) {
+    intro = `The image depicts ${styleStr} characters, ${effMultipleLock}, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`;
   } else {
-    intro = `The image depicts a ${genderStr} ${styleStr} character in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`;
+    intro = `The image depicts a single ${genderStr} ${styleStr} character, ${subjectCountLock}, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`;
   }
   const sections = [intro, ""];
   if (!isNoHumans) {
     sections.push("Character:");
+    if (isSolo) {
+      sections.push("Subject Count: Solo — exactly ONE character in frame, single subject centered; no second person, no crowd, no duplicate.");
+    } else if (isMulti) {
+      sections.push("Subject Count: " + (effCountWords ? effCountWords + " (" + effCountDetail + ")" : "Multiple (" + effCountDetail + ")") + " — " + effMultipleLock + ".");
+    }
     const skinDesc = el.skin.length > 0 ? el.skin.join(", ") : "fair skin";
     const hairColorsClean = el.hair.colors.length > 0 ? el.hair.colors.map((c) => c.replace(/\s*hair$/i, "")).join(" and ") + " hair" : "dark hair";
     const hairStyles = el.hair.styles.length > 0 ? ` styled in ${el.hair.styles.join(", ")}` : "";
@@ -208,7 +248,8 @@ function synthesizeDescriptiveCaption(raw) {
     if (clothingParts.length > 0) {
       const outfitLiteral = clothingParts.join(", ");
       const outfitWithArticle = /^(a|an|the)\s/i.test(outfitLiteral) ? outfitLiteral : `a ${outfitLiteral}`;
-      sections.push(`Clothing: ${capitalize(pronoun)} wears ${outfitWithArticle}.`);
+      const wearVerb = pronoun === "they" ? "wear" : "wears";
+      sections.push(`Clothing: ${capitalize(pronoun)} ${wearVerb} ${outfitWithArticle}.`);
     } else if (/nude|naked|topless|bottomless|no bra|no panties/i.test(raw)) {
       sections.push(`Clothing: ${capitalize(pronoun)} appears nude / without visible clothing.`);
     } else {
@@ -225,20 +266,90 @@ function synthesizeDescriptiveCaption(raw) {
       sections.push(`Accessories: ${capitalize(acc.join(", "))}.`);
     }
     const cameraIsBehind = el.camera.angle.some((a) => /behind|rear|back|over.?shoulder/i.test(a));
-    const defaultOrient = cameraIsBehind ? ", with her back turned to the viewer" : "";
-    const poseLimbs = el.pose.limbs.length > 0 ? el.pose.limbs.join(", ") : "";
+    const defaultOrient = cameraIsBehind ? `, with ${possessive} back turned to the viewer` : "";
     const poseOrient = el.pose.orientation.length > 0 ? el.pose.orientation.join(", ") : "";
+    const limbsLower = el.pose.limbs.map((l) => l.toLowerCase());
+    const has = (re) => limbsLower.some((l) => re.test(l));
+    const mechanics = [];
+    if (has(/\bstanding on one leg\b|\bone leg\b|\bleg up\b/)) {
+      mechanics.push(`weight shifted onto one leg with the other lifted`);
+    } else if (has(/\bspread legs\b|\blegs apart\b/)) {
+      mechanics.push(`legs set apart for balance`);
+    } else if (has(/\bkneel/)) {
+      mechanics.push(`weight settled low on bent knees`);
+    } else if (has(/\bsit/)) {
+      mechanics.push(`weight settled in a seated position`);
+    } else if (has(/\bcrouch|\bsquat/)) {
+      mechanics.push(`body lowered into a compact crouch`);
+    } else if (has(/\bly\b|\blie\b|\blying\b/)) {
+      mechanics.push(`body extended in a reclined position`);
+    } else if (has(/\bstand/)) {
+      mechanics.push(`standing upright with balanced weight`);
+    }
+    if (has(/\barms up\b|\braised\b|\bhands? up\b/)) {
+      mechanics.push(`arms raised overhead`);
+    } else if (has(/\barms behind\b|\bbehind (head|back)\b/)) {
+      mechanics.push(`arms drawn behind ${possessive} head`);
+    } else if (has(/\bhands on hips\b/)) {
+      mechanics.push(`hands resting on ${possessive} hips`);
+    } else if (has(/\bhands? in pockets?\b/)) {
+      mechanics.push(`hands tucked into pockets`);
+    } else if (has(/\b(hands? together|clasped hands?|fingers interlocked)\b/)) {
+      mechanics.push(`hands clasped together`);
+    } else if (has(/\bhand on (chin|cheek|face)\b/)) {
+      mechanics.push(`one hand resting against ${possessive} chin`);
+    } else if (has(/\bwaving\b/)) {
+      mechanics.push(`one hand raised in a wave`);
+    } else if (has(/\barms?\b|\bhands?\b/) && !has(/\bkneel|\bsit|\bstand|\bleg\b|\bfoot\b|\bfeet\b|\bknee\b|\belbow\b/)) {
+      mechanics.push(`arms positioned expressively`);
+    }
+    if (has(/\bknees? together\b/)) {
+      mechanics.push(`knees held together`);
+    } else if (has(/\bknees? apart\b/)) {
+      mechanics.push(`knees set apart`);
+    }
+    if (has(/\bfeet apart\b/)) {
+      mechanics.push(`feet set apart`);
+    } else if (has(/\bfeet together\b/)) {
+      mechanics.push(`feet placed together`);
+    }
+    if (has(/\belbows? on (knees?|thighs?)\b/)) {
+      mechanics.push(`elbows braced on ${possessive} knees`);
+    }
+    if (has(/\bleaning forward\b|\bbent over\b|\bbending\b/)) {
+      mechanics.push(`torso inclined forward`);
+    } else if (has(/\barch\b/)) {
+      mechanics.push(`back arched to emphasize the silhouette`);
+    } else if (has(/\btwist\b|\bcontrapposto\b/)) {
+      mechanics.push(`torso twisted with contrapposto shift`);
+    }
+    if (has(/\barms crossed\b|\bcrossed arms\b/)) {
+      mechanics.push(`arms crossed over chest`);
+    } else if (has(/\blegs crossed\b|\bcrossed legs\b|\bcross-legged\b/)) {
+      mechanics.push(`legs crossed`);
+    } else if (has(/\bcrossed\b/)) {
+      mechanics.push(`limbs crossed`);
+    }
+    const literalLeftovers = el.pose.limbs.filter((l) => {
+      const ll = l.toLowerCase();
+      return !/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll);
+    });
+    for (const left of literalLeftovers.slice(0, 2)) {
+      mechanics.push(left);
+    }
+    const orientClause = poseOrient ? `, ${poseOrient}` : defaultOrient;
+    const poseKeepLock = "Match the reference pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.";
     if (el.pose.general.length > 0) {
-      const limbsPart = poseLimbs ? ` with ${poseLimbs}` : "";
-      const orientPart = poseOrient ? `, ${poseOrient}` : defaultOrient;
-      sections.push(`Pose: The character assumes a ${el.pose.general.join(", ")} stance${limbsPart}${orientPart}.`);
-    } else if (poseLimbs || poseOrient) {
-      const parts = [poseLimbs, poseOrient].filter(Boolean).join(", ");
-      sections.push(`Pose: The character is shown with ${parts}${!poseOrient ? defaultOrient : ""}.`);
+      const mechPart = mechanics.length > 0 ? ` — ${mechanics.join(", ")}` : "";
+      sections.push(`Pose: The character assumes a ${el.pose.general.join(", ")} stance${mechPart}${orientClause}, conveying a ${attitudeWord} attitude. ${poseKeepLock}`);
+    } else if (mechanics.length > 0 || poseOrient) {
+      const mechPart = mechanics.length > 0 ? mechanics.join(", ") : poseOrient;
+      const extraOrient = mechanics.length > 0 ? orientClause : "";
+      sections.push(`Pose: The character assumes a ${attitudeWord} ${stanceWord || "standing"} stance — ${mechPart}${extraOrient}, conveying poise and intent. ${poseKeepLock}`);
     } else if (cameraIsBehind) {
-      sections.push(`Pose: The character is shown with her back turned to the viewer.`);
+      sections.push(`Pose: The character is shown with ${possessive} back turned to the viewer, in a ${attitudeWord} stance. ${poseKeepLock}`);
     } else {
-      sections.push(`Pose: The character is shown in a natural relaxed posture facing the viewer.`);
+      sections.push(`Pose: The character holds a ${attitudeWord} stance facing the viewer, with relaxed arms at ${possessive} sides and even weight distribution. ${poseKeepLock}`);
     }
     if (el.expression.length > 0) {
       sections.push(`Expression: An expression of ${formatList(el.expression)}, communicating emotional depth and intent.`);
@@ -294,15 +405,36 @@ function synthesizeDescriptiveCaption(raw) {
     sections.push(`Composition: Framed as a ${shotDetails}, positioning the subject in the visual center with balanced proportions against the backdrop.`);
   } else if (compDetails) {
     sections.push(`Composition: Framed from a ${compDetails}, directing the viewer's gaze toward the focal center and creating a striking visual impression.`);
+  } else if (isSolo) {
+    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, only one character in frame, no extra people, delivering a dynamic and impactful presentation.`);
+  } else if (isMulti) {
+    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : "multiple"} subjects share the center with balanced framing and depth, ${effMultipleLock}, delivering a dynamic and impactful presentation.`);
   } else {
     sections.push(`Composition: The main subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`);
   }
   return sections.join("\n");
 }
+function ensureSubjectCountLock(text) {
+  const t = text.trim();
+  if (!t) return "";
+  if (/no humans|no person|empty scene|no character/i.test(t)) return t;
+  if (/\bsolo\b|\bsingle\b|\balone in frame\b|\bonly one\b|\bexactly one\b|\b1girl\b|\b1boy\b|\bmultiple\b|\btwo\b|\bthree\b|\bcouple\b|\bgroup\b|\bcrowd\b|\b2girls\b|\b3girls\b|\b2boys\b/i.test(t)) {
+    return t;
+  }
+  return `${t}
+Subject Count: keep the exact same number of characters as the reference image — if it shows a single character, render only ONE person, solo and alone in frame, no second person, no crowd, no duplicate.
+Pose: match the reference image pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.`;
+}
 function extractAnyString(obj, depth = 0) {
   if (depth > 5) return null;
-  if (typeof obj === "string" && obj.trim()) return obj.trim();
-  if (typeof obj === "number") return String(obj);
+  if (typeof obj === "string") {
+    const trimmed = obj.trim();
+    if (!trimmed) return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+    if (trimmed.length < 2) return null;
+    return trimmed;
+  }
+  if (typeof obj === "number" || typeof obj === "boolean") return null;
   if (typeof obj !== "object" || obj === null) return null;
   if (Array.isArray(obj)) {
     for (const item of obj) {
@@ -363,6 +495,18 @@ function organizeCaptionText(raw, mode = "descriptive") {
     unique.push(tag);
   }
   if (unique.length === 0) return text;
+  const hasCountTag = unique.some(
+    (t) => /^(solo|alone|single|1girl|1boy|2girls|3girls|4girls|2boys|3boys|multiple|couple|group|crowd|\d+\+?(girls|boys))$/i.test(t)
+  );
+  const hasMultipleTag = unique.some(
+    (t) => /^(2girls|3girls|4girls|2boys|3boys|multiple|couple|group|crowd|\d+\+?(girls|boys))$/i.test(t) || /^(multiple (girls|boys))$/i.test(t)
+  );
+  const hasNoHumans = unique.some((t) => /^(no humans|scenery|landscape)$/i.test(t));
+  const hasFemaleTag = unique.some((t) => /^(female|girl|woman|lady|heroine|waifu|1girl)$/i.test(t));
+  const hasMaleTag = unique.some((t) => /^(male|boy|man|guy|hero|1boy)$/i.test(t));
+  if (!hasCountTag && !hasNoHumans && !hasMultipleTag) {
+    unique.unshift(hasFemaleTag && hasMaleTag ? "couple" : "solo");
+  }
   const categorized = unique.map((tag, idx) => {
     const cat = CAPTION_CATEGORY_ORDER.findIndex((test) => test.test(tag));
     return { tag, idx, cat: cat === -1 ? CAPTION_CATEGORY_ORDER.length : cat };
@@ -545,9 +689,12 @@ class ComfyUIClient {
       }
     } catch (err) {
       console.warn("[ComfyUIClient] Falha ao buscar nós disponíveis:", err);
-      return { text: "" };
+      throw new Error("Não foi possível falar com o ComfyUI (/object_info). Verifique se o ComfyUI está online e tente de novo.");
     }
     const allNodeTypes = Object.keys(allNodesInfo);
+    if (allNodeTypes.length === 0) {
+      throw new Error("Não foi possível ler a lista de nós do ComfyUI (/object_info vazio). Verifique se o ComfyUI está online e tente de novo.");
+    }
     const knownCaptioningPrefixes = ["wdtagger", "wd14tagger", "florence2", "joycaption", "joy_caption"];
     const captionNodeKeywords = ["tagger", "florence", "joycaption", "joy_caption"];
     const excludeKeywords = [
@@ -566,6 +713,7 @@ class ComfyUIClient {
       "switch"
     ];
     const possibleCaptionNodes = [];
+    const skippedNodes = [];
     for (const name of allNodeTypes) {
       const lower = name.toLowerCase();
       const isCaptionNode = knownCaptioningPrefixes.some((p) => lower.startsWith(p) || lower.includes(p)) || captionNodeKeywords.some((kw) => lower.includes(kw)) && !excludeKeywords.some((kw) => lower.includes(kw));
@@ -575,6 +723,7 @@ class ComfyUIClient {
       const required = nodeInfo?.input?.required;
       const captionInputs = {};
       let hasImageInput = false;
+      let needsExternalModel = false;
       if (required) {
         for (const [inputName, inputDef] of Object.entries(required)) {
           const def = Array.isArray(inputDef) ? inputDef : [inputDef];
@@ -584,6 +733,7 @@ class ComfyUIClient {
             captionInputs[inputName] = ["1", 0];
             hasImageInput = true;
           } else if (typeOrOptions === "LATENT" || typeOrOptions === "MODEL" || typeOrOptions === "CLIP" || typeOrOptions === "VAE") {
+            needsExternalModel = true;
             continue;
           } else if (Array.isArray(typeOrOptions)) {
             captionInputs[inputName] = config?.default ?? typeOrOptions[0] ?? "";
@@ -599,14 +749,29 @@ class ComfyUIClient {
         }
       }
       if (!hasImageInput) continue;
+      if (needsExternalModel) {
+        skippedNodes.push(`${name} (pulado: exige MODEL/CLIP externo — use o workflow próprio do nó ou o WD14 Tagger)`);
+        continue;
+      }
       possibleCaptionNodes.push({ nodeType: name, inputs: captionInputs });
     }
+    const rank = (n) => {
+      const l = n.toLowerCase();
+      if (l.includes("wd14") || l.includes("wdtagger")) return 0;
+      if (l.includes("tagger")) return 1;
+      if (l.includes("florence")) return 2;
+      return 3;
+    };
+    possibleCaptionNodes.sort((a, b) => rank(a.nodeType) - rank(b.nodeType));
     console.log("[ComfyUIClient] Nós de captioning encontrados:", possibleCaptionNodes.map((n) => `${n.nodeType} (${JSON.stringify(n.inputs).slice(0, 120)})`));
     if (possibleCaptionNodes.length === 0) {
-      console.warn("[ComfyUIClient] Nenhum nó de captioning instalado");
-      console.warn("[ComfyUIClient] Instale WD14Tagger, Florence2 ou JoyCaption no ComfyUI Manager");
-      return { text: "" };
+      const detail = skippedNodes.length > 0 ? ` Encontrados mas pulados: ${skippedNodes.join("; ")}.` : "";
+      console.warn("[ComfyUIClient] Nenhum nó de captioning utilizável." + detail);
+      throw new Error(
+        "Nenhum nó de captioning utilizável no ComfyUI." + detail + ' Instale o "WD14 Tagger" pelo ComfyUI Manager (com o modelo, ex.: wd-vit-large) e reinicie o ComfyUI.'
+      );
     }
+    const attemptErrors = [];
     for (const { nodeType, inputs: captionInputs } of possibleCaptionNodes) {
       console.log(`[ComfyUIClient] Tentando nó: ${nodeType}`);
       try {
@@ -643,12 +808,16 @@ class ComfyUIClient {
           }
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : "erro desconhecido";
         console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err);
+        attemptErrors.push(`${nodeType}: ${msg.slice(0, 220)}`);
         continue;
       }
     }
     console.warn("[ComfyUIClient] Nenhum nó de captioning produziu resultado");
-    return { text: "" };
+    throw new Error(
+      `Extração falhou nos nós tentados (${possibleCaptionNodes.map((n) => n.nodeType).join(", ")}). Detalhes: ${attemptErrors.join(" | ").slice(0, 500) || "sem detalhes"}. Abra o console do ComfyUI para ver o erro do nó (modelo do tagger ausente é a causa mais comum após update — baixe o modelo no Manager e reinicie).`
+    );
   }
   async extractPose(inputFilename) {
     const prompt = {
