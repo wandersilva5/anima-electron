@@ -1,4 +1,4 @@
-import type { DiffusionModelId, LoraSelection } from '@shared/types'
+import type { DiffusionModelId, LoraSelection, RegionalLoraSlot } from '@shared/types'
 
 /**
  * Persistência por aba das últimas configurações usadas.
@@ -7,6 +7,12 @@ import type { DiffusionModelId, LoraSelection } from '@shared/types'
 
 const PREFIX = 'anima-tab'
 
+export interface RegionalSettings {
+  enabled: boolean
+  face: RegionalLoraSlot | null
+  breasts: RegionalLoraSlot | null
+}
+
 interface TabSettings {
   diffusionModel: DiffusionModelId
   checkpoint: string
@@ -14,6 +20,7 @@ interface TabSettings {
   prompt: string
   denoise: number
   captionMode?: 'descriptive' | 'tags'
+  regional?: RegionalSettings
 }
 
 export function loadTabSettings(key: string): Partial<TabSettings> {

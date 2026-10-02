@@ -1,14 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock, Eye, EyeOff, Copy, Check } from 'lucide-react'
+import { Upload, Wand2, Trash2, Sparkles, ArrowLeftRight, Clock, Eye, EyeOff, Copy, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
-import type { DiffusionModelId, GenerationResult } from '@shared/types'
+import type { DiffusionModelId, GenerationResult, LoraInfo, RegionalLoraSlot } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
 import { useAutoSelectModel } from '../hooks/useAutoSelectModel'
 import { useLoraSelection } from '../hooks/useLoraSelection'
 import { resizeImageForModel } from '../utils/imageResize'
-import { loadTabSettings, saveTabSettings } from '../utils/tabSettings'
+import { loadTabSettings, saveTabSettings, type RegionalSettings } from '../utils/tabSettings'
+import { SafeImage } from './SafeImage'
 
 const TAB_KEY = 'recreate'
 
@@ -20,6 +21,11 @@ export function RecreateTab() {
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(savedSettings.checkpoint ?? '')
   const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
   const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.65)
+  const [regional, setRegional] = useState<RegionalSettings>(
+    savedSettings.regional ?? { enabled: false, face: null, breasts: null }
+  )
+  const [regionalOpen, setRegionalOpen] = useState(true)
+  const [notice, setNotice] = useState<string | null>(null)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
   const [caption, setCaption] = useState(savedSettings.prompt ?? '')
@@ -54,9 +60,10 @@ export function RecreateTab() {
       loras: selectedLoras,
       prompt: caption,
       denoise,
-      captionMode
+      captionMode,
+      regional
     })
-  }, [selectedModel, selectedCheckpoint, selectedLoras, caption, denoise, captionMode])
+  }, [selectedModel, selectedCheckpoint, selectedLoras, caption, denoise, captionMode, regional])
 
   // Imagem escolhida no histórico (sidebar) vira a imagem de origem
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
@@ -138,6 +145,7 @@ export function RecreateTab() {
     if (!originalSrc || !captionText.trim()) return
     setGenerating(true)
     setError(null)
+    setNotice(null)
     setResultSrc(null)
     setShowingResult(true)
 
@@ -154,10 +162,19 @@ export function RecreateTab() {
 
       const seed = Math.floor(Math.random() * 2147483647)
 
+      // LoRAs por região (teste): descarta slots de pastas que já não existem
+      const validSlot = (slot: RegionalLoraSlot | null): RegionalLoraSlot | null =>
+        slot && loras.some(l => l.name === slot.name) ? slot : null
+      const regionalFace = validSlot(regional.face)
+      const regionalBreasts = validSlot(regional.breasts)
+      const regionalParam = regional.enabled && (regionalFace || regionalBreasts)
+        ? { face: regionalFace, breasts: regionalBreasts }
+        : undefined
+
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: captionText,
-        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore',
+        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, large breasts, extra-large breasts, huge breasts',
         seed,
         steps: prof.defaults.steps,
         cfg: prof.defaults.cfg,
@@ -167,8 +184,13 @@ export function RecreateTab() {
         loras: selectedLoras,
         imageBase64,
         denoise,
-        filenamePrefix: 'anima-recreate'
+        filenamePrefix: 'anima-recreate',
+        regional: regionalParam
       })
+
+      if (result.warning) {
+        setNotice(result.warning)
+      }
 
       const image = result.images?.[0]
       if (image) {
@@ -201,7 +223,7 @@ export function RecreateTab() {
       stopProgress()
       setGenerating(false)
     }
-  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
+  }, [originalSrc, selectedModel, denoise, selectedCheckpoint, selectedLoras, regional, loras, startProgress, addToHistory])
 
   const handleExtractCaption = useCallback(async () => {
     if (!originalSrc) return
@@ -387,8 +409,8 @@ export function RecreateTab() {
                     type="button"
                     onClick={() => setCaptionMode('descriptive')}
                     className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${captionMode === 'descriptive'
-                        ? 'bg-accent text-white shadow-xs'
-                        : 'text-text-muted hover:text-text-primary'
+                      ? 'bg-accent text-white shadow-xs'
+                      : 'text-text-muted hover:text-text-primary'
                       }`}
                     title="Gera uma descrição rica e estruturada em prosa natural"
                   >
@@ -398,8 +420,8 @@ export function RecreateTab() {
                     type="button"
                     onClick={() => setCaptionMode('tags')}
                     className={`px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors ${captionMode === 'tags'
-                        ? 'bg-accent text-white shadow-xs'
-                        : 'text-text-muted hover:text-text-primary'
+                      ? 'bg-accent text-white shadow-xs'
+                      : 'text-text-muted hover:text-text-primary'
                       }`}
                     title="Gera lista de tags organizadas (formato Danbooru)"
                   >
@@ -430,8 +452,8 @@ export function RecreateTab() {
                   onClick={handleExtractCaption}
                   disabled={!originalSrc || captioning || generating || !status.online}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${!originalSrc || captioning || generating || !status.online
-                      ? 'bg-surface-tertiary text-text-muted cursor-not-allowed opacity-60'
-                      : 'bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30'
+                    ? 'bg-surface-tertiary text-text-muted cursor-not-allowed opacity-60'
+                    : 'bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30'
                     }`}
                   title="Extrai a descrição da imagem no formato selecionado sem iniciar geração"
                 >
@@ -503,6 +525,73 @@ export function RecreateTab() {
                 <span>Intenso</span>
               </div>
             </div>
+
+            {/* LoRAs por região (teste — apenas modelo anima) */}
+            {selectedModel === 'anima' && (
+              <div className="p-3 rounded-lg border border-border bg-surface space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRegionalOpen(o => !o)}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary text-left transition-colors flex-1"
+                  >
+                    {regionalOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    <span>LoRAs por Região</span>
+                    <span className="text-[9px] uppercase tracking-wider text-accent font-semibold normal-case px-1 py-0.5 rounded bg-accent/10">teste</span>
+                    {regional.enabled && (
+                      <span className="text-[10px] text-accent font-normal normal-case">
+                        ({[regional.face ? 'rosto' : null, regional.breasts ? 'seios' : null].filter(Boolean).join(', ') || 'ativo'})
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={regional.enabled}
+                    disabled={generating}
+                    onClick={() => setRegional(r => ({ ...r, enabled: !r.enabled }))}
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-colors shrink-0 ${
+                      generating
+                        ? 'opacity-40 cursor-not-allowed bg-surface-tertiary text-text-muted border-border'
+                        : regional.enabled
+                          ? 'bg-accent text-white border-accent'
+                          : 'bg-surface-tertiary text-text-muted border-border hover:text-text-primary'
+                    }`}
+                  >
+                    {regional.enabled ? 'Ativo' : 'Off'}
+                  </button>
+                </div>
+
+                {regionalOpen && (
+                  <div className="space-y-3 pt-1 border-t border-border/50">
+                    <p className="text-[10px] text-text-muted leading-relaxed">
+                      Um LoRA aplicado só ao rosto e outro só aos seios, com máscaras detectadas
+                      automaticamente na imagem de entrada.
+                    </p>
+                    <RegionalSlotRow
+                      label="Rosto"
+                      value={regional.face}
+                      loras={loras}
+                      disabled={generating}
+                      onChange={(slot) => setRegional(r => ({ ...r, face: slot }))}
+                    />
+                    <RegionalSlotRow
+                      label="Seios"
+                      value={regional.breasts}
+                      loras={loras}
+                      disabled={generating}
+                      onChange={(slot) => setRegional(r => ({ ...r, breasts: slot }))}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {notice && (
+              <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-xs">
+                {notice}
+              </div>
+            )}
 
             {error && (
               <div className="p-3 rounded-lg bg-error/10 border border-error/30 text-error text-xs">
@@ -591,4 +680,212 @@ export function RecreateTab() {
       </aside>
     </div>
   )
+}
+
+/** Uma linha do seletor regional: miniatura + LoRA (dropdown) + força (slider único model/clip). */
+function RegionalSlotRow({
+  label,
+  value,
+  loras,
+  disabled,
+  onChange
+}: {
+  label: string
+  value: RegionalLoraSlot | null
+  loras: LoraInfo[]
+  disabled: boolean
+  onChange: (slot: RegionalLoraSlot | null) => void
+}) {
+  const selected = value ? loras.find((l) => l.name === value.name) : undefined
+  const shortName = selected ? shortLoraName(selected.name) : ''
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Fecha o dropdown ao clicar fora
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  // Foca no campo de busca ao abrir ou limpa a busca ao fechar
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => searchInputRef.current?.focus(), 50)
+    } else {
+      setSearch('')
+    }
+  }, [open])
+
+  const filteredLoras = useMemo(() => {
+    if (!search.trim()) return loras
+    const q = search.trim().toLowerCase()
+    return loras.filter((l) => {
+      const name = l.name.toLowerCase()
+      const short = shortLoraName(l.name).toLowerCase()
+      return name.includes(q) || short.includes(q)
+    })
+  }, [loras, search])
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-text-secondary">{label}</span>
+        <span className="text-[10px] text-text-muted font-mono">
+          {value ? value.strengthModel.toFixed(2) : '—'}
+        </span>
+      </div>
+      <div className="flex items-start gap-2">
+        <div className="w-11 h-11 shrink-0 rounded-lg border border-border overflow-hidden bg-surface-tertiary flex items-center justify-center">
+          {selected?.previewUrl ? (
+            <SafeImage
+              path={selected.previewUrl}
+              alt={shortName}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <span className="text-[8px] text-text-muted text-center px-1 leading-tight break-all">
+              {shortName ? shortName.slice(0, 18) : label}
+            </span>
+          )}
+        </div>
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="relative" ref={containerRef}>
+            <button
+              type="button"
+              disabled={disabled || loras.length === 0}
+              onClick={() => setOpen((o) => !o)}
+              className="w-full flex items-center gap-2 bg-surface rounded-lg border border-border px-2 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60 text-left"
+            >
+              <span className="flex-1 min-w-0 truncate">
+                {shortName || (loras.length === 0 ? 'Nenhum LoRA disponível' : 'Nenhum LoRA')}
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {open && (
+              <div className="absolute left-0 right-0 top-full mt-1 max-h-60 z-30 rounded-lg border border-border bg-surface shadow-xl flex flex-col overflow-hidden">
+                {/* Campo de pesquisa digitando */}
+                <div className="p-1.5 border-b border-border bg-surface shrink-0">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Pesquisar LoRA..."
+                      className="w-full bg-surface-tertiary rounded border border-border pl-6 pr-6 py-1 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    {search && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSearch('')
+                          searchInputRef.current?.focus()
+                        }}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary text-[10px] w-4 h-4 flex items-center justify-center rounded"
+                        title="Limpar busca"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Lista rolável de opções */}
+                <div className="flex-1 overflow-y-auto custom-scroll">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(null)
+                      setOpen(false)
+                    }}
+                    className={`w-full text-left px-2 py-1.5 text-[11px] hover:bg-surface-tertiary transition-colors border-b border-border/40 ${
+                      value ? 'text-text-muted' : 'text-accent font-medium'
+                    }`}
+                  >
+                    Nenhum LoRA
+                  </button>
+
+                  {filteredLoras.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-[11px] text-text-muted">
+                      Nenhum LoRA encontrado
+                    </div>
+                  ) : (
+                    filteredLoras.map((l) => {
+                      const name = shortLoraName(l.name)
+                      const isSelected = value?.name === l.name
+                      return (
+                        <button
+                          key={l.name}
+                          type="button"
+                          title={l.name}
+                          onClick={() => {
+                            const strength = value?.strengthModel ?? 0.8
+                            onChange({ name: l.name, strengthModel: strength, strengthClip: strength })
+                            setOpen(false)
+                          }}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-tertiary transition-colors ${
+                            isSelected ? 'bg-accent/10' : ''
+                          }`}
+                        >
+                          <span className="w-8 h-8 shrink-0 rounded overflow-hidden bg-surface-tertiary border border-border flex items-center justify-center">
+                            {l.previewUrl ? (
+                              <SafeImage path={l.previewUrl} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-[7px] text-text-muted text-center px-0.5 leading-tight break-all">
+                                {name.slice(0, 10)}
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className={`flex-1 min-w-0 text-[11px] leading-tight break-all ${
+                              isSelected ? 'text-accent font-medium' : 'text-text-primary'
+                            }`}
+                          >
+                            {name}
+                          </span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          {value && (
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={value.strengthModel}
+              disabled={disabled}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                onChange({ ...value, strengthModel: v, strengthClip: v })
+              }}
+              className="w-full"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Nome curto do LoRA (sem caminho nem extensão). */
+function shortLoraName(name: string): string {
+  return name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
 }

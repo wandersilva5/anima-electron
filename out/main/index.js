@@ -615,6 +615,8 @@ class ComfyUIClient {
                         const excMsg = info.exception_message || info.exception_type || info.message;
                         if (excMsg) {
                           details += ` [Nó: ${nodeType}${nodeId}]: ${excMsg}`;
+                          const hint = regionalErrorHint(String(excMsg));
+                          if (hint) details += ` — ${hint}`;
                         } else if (typeof info === "string") {
                           details += ` ${info}`;
                         }
@@ -892,7 +894,9 @@ class ComfyUIClient {
           onProgress(msg.data.value, msg.data.max);
         } else if (msg.type === "execution_error" && msg.data?.prompt_id === promptId) {
           const d = msg.data;
-          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${d.exception_message || d.exception_type}`;
+          const baseMsg = d.exception_message || d.exception_type;
+          const hint = regionalErrorHint(String(baseMsg ?? ""));
+          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${baseMsg}${hint ? ` — ${hint}` : ""}`;
           onError?.(errStr);
         }
       } catch {
@@ -902,6 +906,15 @@ class ComfyUIClient {
     });
     return ws;
   }
+}
+function regionalErrorHint(msg) {
+  if (msg.includes("lifecycle owners cannot be empty")) {
+    return "Nenhuma região LoRA ficou ativa — a detecção não encontrou rosto/seios na imagem, ou a força do LoRA está em 0. Use uma imagem com o rosto visível e forças acima de zero.";
+  }
+  if (msg.includes("composition cannot be empty")) {
+    return "Os LoRAs regionais não foram carregados — confirme que os arquivos escolhidos ainda existem na pasta de LoRAs do modelo.";
+  }
+  return null;
 }
 class ComfyLauncher {
   constructor(comfyDir) {
@@ -1573,7 +1586,184 @@ class WorkflowManager {
         }
       }
     }
+    this.injectRegionalPrompt(prompt, params, data, opts, warnings);
     return prompt;
+  }
+  /**
+   * Teste de regional prompting: aplica LoRAs diferentes por região da imagem
+   * (rosto/seios) usando SimpleSyrup + Prompt Control:
+   *
+   * - ScheduleAndEncodePromptsWithPromptControl: prompt positivo segmentado com
+   *   [SEP|rosto]/[SEP|seios]; tags <lora:> dentro de um segmento viram LoRAs
+   *   daquela região (via hooks na conditioning); o texto global preenche os
+   *   segmentos negativos ausentes.
+   * - DetectSEGSWithUltralytics: máscara de rosto (face_yolov8m) e de seios
+   *   (Anzhc Breasts Seg, baixado sob demanda) a partir da imagem de entrada.
+   * - KSamplerAttentionCoupling: amostrador com atenção acoplada por máscara;
+   *   substitui o KSampler do template (mesmo id) preservando seed/steps/etc.
+   *
+   * Restrito ao perfil anima (única família de modelo admitida pelo pack) e
+   * falha de forma graciosa com warning quando os nós não estão instalados.
+   */
+  injectRegionalPrompt(prompt, params, data, opts, warnings) {
+    const regional = params.regional;
+    if (!regional) return;
+    const slots = [];
+    if (regional.face) slots.push({ sepLabel: "rosto", slot: regional.face });
+    if (regional.breasts) slots.push({ sepLabel: "seios", slot: regional.breasts });
+    if (slots.length === 0) return;
+    const skip = (message) => {
+      warnings.push(message);
+      console.warn(`[WorkflowManager] Regional ignorado: ${message}`);
+    };
+    if (params.diffusionModel !== "anima") {
+      skip("LoRAs por região disponíveis apenas no modelo anima. Geração segue sem regional.");
+      return;
+    }
+    if (!params.imagePath || !prompt["99990"]) {
+      skip("LoRAs por região exigem geração img2img. Geração segue sem regional.");
+      return;
+    }
+    const requiredNodes = [
+      "SimpleSyrup.ScheduleAndEncodePromptsWithPromptControl",
+      "SimpleSyrup.KSamplerAttentionCoupling",
+      "SimpleSyrup.LoadUltralyticsModel",
+      "SimpleSyrup.DetectSEGSWithUltralytics",
+      "MaskBatchMulti"
+    ];
+    if (opts.availableNodes) {
+      const missing = requiredNodes.filter((n) => !opts.availableNodes.has(n));
+      if (missing.length > 0) {
+        skip(
+          `LoRAs por região indisponíveis: nós ausentes no ComfyUI (${missing.join(", ")}). A imagem será gerada sem aplicar LoRAs regionais.`
+        );
+        return;
+      }
+    }
+    const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
+    if (!ksamplerEntry || ksamplerEntry.class_type !== "KSampler") {
+      skip("Workflow sem KSampler padrão; não é possível montar o sampler regional.");
+      return;
+    }
+    const kInputs = ksamplerEntry.inputs;
+    const posEntry = data.positiveNodeId !== null ? prompt[String(data.positiveNodeId)] : void 0;
+    let clipSource = posEntry ? posEntry.inputs?.clip : void 0;
+    for (let guard = 0; guard < 10 && Array.isArray(clipSource); guard++) {
+      const src = prompt[clipSource[0]];
+      if (src && (src.class_type === "LoraLoader" || src.class_type === "LoraLoaderModelOnly")) {
+        clipSource = src.inputs?.clip;
+      } else {
+        break;
+      }
+    }
+    if (!Array.isArray(clipSource)) {
+      skip("Entrada de CLIP não encontrada no workflow; sem regional.");
+      return;
+    }
+    let modelSource = kInputs.model;
+    for (let guard = 0; guard < 5 && Array.isArray(modelSource); guard++) {
+      const src = prompt[modelSource[0]];
+      if (src && src.class_type === "AnimaTeaCache") {
+        modelSource = src.inputs?.model;
+      } else {
+        break;
+      }
+    }
+    if (!Array.isArray(modelSource)) {
+      skip("Fonte de MODEL não encontrada; sem regional.");
+      return;
+    }
+    const clamp = (v, fallback) => Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : fallback;
+    const caption = params.prompt;
+    let positivePrompt = caption;
+    for (const { sepLabel, slot } of slots) {
+      const sModel = clamp(slot.strengthModel, 0.8);
+      const sClip = 0;
+      positivePrompt += ` [SEP|${sepLabel}] ${caption} <lora:${slot.name}:${sModel}:${sClip}>`;
+    }
+    const scheduleId = 86001;
+    prompt[String(scheduleId)] = {
+      class_type: "SimpleSyrup.ScheduleAndEncodePromptsWithPromptControl",
+      _meta: { title: "Schedule & Encode (regional)" },
+      inputs: {
+        model: modelSource,
+        clip: clipSource,
+        positive_prompt: positivePrompt,
+        negative_prompt: params.negativePrompt || ""
+      }
+    };
+    const detectInputs = (detectorRef) => ({
+      image: ["99990", 0],
+      detector_model: detectorRef,
+      confidence_threshold: 0.5,
+      size_threshold: 10,
+      keep_only: 0,
+      keep_by: "highest confidence",
+      bbox_dilation: 0,
+      sub_dilation: 0,
+      post_dilation: 0,
+      crop_factor: 3,
+      sort_order: "largest to smallest",
+      combine_segs: true
+    });
+    const maskRefs = [];
+    if (regional.face) {
+      prompt["86010"] = {
+        class_type: "SimpleSyrup.LoadUltralyticsModel",
+        _meta: { title: "Ultralytics (rosto)" },
+        inputs: { model_name: "bbox/face_yolov8m.pt" }
+      };
+      prompt["86011"] = {
+        class_type: "SimpleSyrup.DetectSEGSWithUltralytics",
+        _meta: { title: "Detecção de rosto" },
+        inputs: detectInputs(["86010", 0])
+      };
+      maskRefs.push(["86011", 1]);
+    }
+    if (regional.breasts) {
+      prompt["86012"] = {
+        class_type: "SimpleSyrup.LoadUltralyticsModel",
+        _meta: { title: "Ultralytics (seios)" },
+        inputs: { model_name: "Anzhc Breasts Seg v1 1024n (6.58MB)" }
+      };
+      prompt["86013"] = {
+        class_type: "SimpleSyrup.DetectSEGSWithUltralytics",
+        _meta: { title: "Detecção de seios" },
+        inputs: detectInputs(["86012", 0])
+      };
+      maskRefs.push(["86013", 1]);
+    }
+    let regionMasksRef;
+    if (maskRefs.length === 1) {
+      regionMasksRef = maskRefs[0];
+    } else {
+      prompt["86014"] = {
+        class_type: "MaskBatchMulti",
+        _meta: { title: "Batch de máscaras regionais" },
+        inputs: {
+          inputcount: maskRefs.length,
+          mask_1: maskRefs[0],
+          mask_2: maskRefs[1]
+        }
+      };
+      regionMasksRef = ["86014", 0];
+    }
+    if (data.positiveNodeId !== null) delete prompt[String(data.positiveNodeId)];
+    if (data.negativeNodeId !== null) delete prompt[String(data.negativeNodeId)];
+    for (const key of Object.keys(prompt)) {
+      const entry = prompt[key];
+      if (entry.class_type === "AnimaTeaCache") delete prompt[key];
+    }
+    ksamplerEntry.class_type = "SimpleSyrup.KSamplerAttentionCoupling";
+    kInputs.model = [String(scheduleId), 0];
+    kInputs.positive = [String(scheduleId), 1];
+    kInputs.negative = [String(scheduleId), 2];
+    kInputs.region_masks = regionMasksRef;
+    kInputs.regional_prompt_weight = 1;
+    kInputs.region_mask_feather = 16;
+    console.log(
+      `[Anima] Regional injetado: ${slots.map((s) => s.sepLabel).join("+")} | prompt segmentado (${slots.length + 1} entradas), máscaras em ${regionMasksRef[0]}`
+    );
   }
   /**
    * Constrói o prompt da API do ComfyUI para o workflow Krea2-Pose.
@@ -2143,7 +2333,26 @@ function sanitizeGenerationParams(raw) {
     poseData: typeof p.poseData === "string" ? p.poseData : void 0,
     poseStrength: p.poseStrength !== void 0 ? num(p.poseStrength, 1, 0.05, 2) : void 0,
     lineThickness: p.lineThickness !== void 0 ? Math.floor(num(p.lineThickness, 2, 1, 10)) : void 0,
-    safeZone: p.safeZone !== void 0 ? Math.floor(num(p.safeZone, 0, 0, 100)) : void 0
+    safeZone: p.safeZone !== void 0 ? Math.floor(num(p.safeZone, 0, 0, 100)) : void 0,
+    regional: (() => {
+      const r = p.regional && typeof p.regional === "object" ? p.regional : null;
+      if (!r) return void 0;
+      const slot = (v) => {
+        if (!v || typeof v !== "object") return null;
+        const s = v;
+        const name = strOrNull(s.name);
+        if (!name || name.length > 300) return null;
+        return {
+          name,
+          strengthModel: num(s.strengthModel, 0.8, 0, 2),
+          strengthClip: num(s.strengthClip, 0.8, 0, 2)
+        };
+      };
+      const face = slot(r.face);
+      const breasts = slot(r.breasts);
+      if (!face && !breasts) return void 0;
+      return { face, breasts };
+    })()
   };
 }
 function stopStatusPoll() {

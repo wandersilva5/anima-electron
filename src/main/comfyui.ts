@@ -231,6 +231,8 @@ export class ComfyUIClient {
                         const excMsg = info.exception_message || info.exception_type || info.message
                         if (excMsg) {
                           details += ` [Nó: ${nodeType}${nodeId}]: ${excMsg}`
+                          const hint = regionalErrorHint(String(excMsg))
+                          if (hint) details += ` — ${hint}`
                         } else if (typeof info === 'string') {
                           details += ` ${info}`
                         }
@@ -548,7 +550,9 @@ export class ComfyUIClient {
           onProgress(msg.data.value, msg.data.max)
         } else if (msg.type === 'execution_error' && msg.data?.prompt_id === promptId) {
           const d = msg.data
-          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${d.exception_message || d.exception_type}`
+          const baseMsg = d.exception_message || d.exception_type
+          const hint = regionalErrorHint(String(baseMsg ?? ''))
+          const errStr = `Erro de execução no ComfyUI [Nó: ${d.node_type} (#${d.node_id})]: ${baseMsg}${hint ? ` — ${hint}` : ''}`
           onError?.(errStr)
         }
       } catch {
@@ -562,4 +566,15 @@ export class ComfyUIClient {
 
     return ws
   }
+}
+
+/** Traduz erros conhecidos do regional prompting (SimpleSyrup) em dica acionável. */
+function regionalErrorHint(msg: string): string | null {
+  if (msg.includes('lifecycle owners cannot be empty')) {
+    return 'Nenhuma região LoRA ficou ativa — a detecção não encontrou rosto/seios na imagem, ou a força do LoRA está em 0. Use uma imagem com o rosto visível e forças acima de zero.'
+  }
+  if (msg.includes('composition cannot be empty')) {
+    return 'Os LoRAs regionais não foram carregados — confirme que os arquivos escolhidos ainda existem na pasta de LoRAs do modelo.'
+  }
+  return null
 }

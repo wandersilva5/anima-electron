@@ -330,7 +330,26 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
     poseData: typeof p.poseData === 'string' ? p.poseData : undefined,
     poseStrength: p.poseStrength !== undefined ? num(p.poseStrength, 1, 0.05, 2) : undefined,
     lineThickness: p.lineThickness !== undefined ? Math.floor(num(p.lineThickness, 2, 1, 10)) : undefined,
-    safeZone: p.safeZone !== undefined ? Math.floor(num(p.safeZone, 0, 0, 100)) : undefined
+    safeZone: p.safeZone !== undefined ? Math.floor(num(p.safeZone, 0, 0, 100)) : undefined,
+    regional: (() => {
+      const r = p.regional && typeof p.regional === 'object' ? p.regional as Record<string, unknown> : null
+      if (!r) return undefined
+      const slot = (v: unknown): { name: string; strengthModel: number; strengthClip: number } | null => {
+        if (!v || typeof v !== 'object') return null
+        const s = v as Record<string, unknown>
+        const name = strOrNull(s.name)
+        if (!name || name.length > 300) return null
+        return {
+          name,
+          strengthModel: num(s.strengthModel, 0.8, 0, 2),
+          strengthClip: num(s.strengthClip, 0.8, 0, 2)
+        }
+      }
+      const face = slot(r.face)
+      const breasts = slot(r.breasts)
+      if (!face && !breasts) return undefined
+      return { face, breasts }
+    })()
   }
 }
 

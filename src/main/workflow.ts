@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
-import type { GenerationParams, WorkflowJSON, DiffusionModelId } from '@shared/types'
+import type { GenerationParams, WorkflowJSON, DiffusionModelId, RegionalLoraSlot } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 interface WorkflowDefaults {
@@ -651,7 +651,222 @@ export class WorkflowManager {
       }
     }
 
+    this.injectRegionalPrompt(prompt, params, data, opts, warnings)
+
     return prompt
+  }
+
+  /**
+   * Teste de regional prompting: aplica LoRAs diferentes por região da imagem
+   * (rosto/seios) usando SimpleSyrup + Prompt Control:
+   *
+   * - ScheduleAndEncodePromptsWithPromptControl: prompt positivo segmentado com
+   *   [SEP|rosto]/[SEP|seios]; tags <lora:> dentro de um segmento viram LoRAs
+   *   daquela região (via hooks na conditioning); o texto global preenche os
+   *   segmentos negativos ausentes.
+   * - DetectSEGSWithUltralytics: máscara de rosto (face_yolov8m) e de seios
+   *   (Anzhc Breasts Seg, baixado sob demanda) a partir da imagem de entrada.
+   * - KSamplerAttentionCoupling: amostrador com atenção acoplada por máscara;
+   *   substitui o KSampler do template (mesmo id) preservando seed/steps/etc.
+   *
+   * Restrito ao perfil anima (única família de modelo admitida pelo pack) e
+   * falha de forma graciosa com warning quando os nós não estão instalados.
+   */
+  private injectRegionalPrompt(
+    prompt: Record<string, unknown>,
+    params: GenerationParams,
+    data: WorkflowData,
+    opts: { availableNodes?: Set<string>; warnings?: string[] },
+    warnings: string[]
+  ): void {
+    const regional = params.regional
+    if (!regional) return
+
+    const slots: Array<{ sepLabel: string; slot: RegionalLoraSlot }> = []
+    if (regional.face) slots.push({ sepLabel: 'rosto', slot: regional.face })
+    if (regional.breasts) slots.push({ sepLabel: 'seios', slot: regional.breasts })
+    if (slots.length === 0) return
+
+    const skip = (message: string): void => {
+      warnings.push(message)
+      console.warn(`[WorkflowManager] Regional ignorado: ${message}`)
+    }
+
+    if (params.diffusionModel !== 'anima') {
+      skip('LoRAs por região disponíveis apenas no modelo anima. Geração segue sem regional.')
+      return
+    }
+    if (!params.imagePath || !prompt['99990']) {
+      skip('LoRAs por região exigem geração img2img. Geração segue sem regional.')
+      return
+    }
+
+    const requiredNodes = [
+      'SimpleSyrup.ScheduleAndEncodePromptsWithPromptControl',
+      'SimpleSyrup.KSamplerAttentionCoupling',
+      'SimpleSyrup.LoadUltralyticsModel',
+      'SimpleSyrup.DetectSEGSWithUltralytics',
+      'MaskBatchMulti'
+    ]
+    if (opts.availableNodes) {
+      const missing = requiredNodes.filter(n => !opts.availableNodes!.has(n))
+      if (missing.length > 0) {
+        skip(
+          `LoRAs por região indisponíveis: nós ausentes no ComfyUI (${missing.join(', ')}). ` +
+          'A imagem será gerada sem aplicar LoRAs regionais.'
+        )
+        return
+      }
+    }
+
+    const ksamplerEntry = prompt[String(data.ksamplerNodeId)] as Record<string, unknown> | undefined
+    if (!ksamplerEntry || ksamplerEntry.class_type !== 'KSampler') {
+      skip('Workflow sem KSampler padrão; não é possível montar o sampler regional.')
+      return
+    }
+    const kInputs = ksamplerEntry.inputs as Record<string, unknown>
+
+    // clip resolvido pelo loop principal (já encadeado nos LoRAs globais)
+    const posEntry = data.positiveNodeId !== null
+      ? prompt[String(data.positiveNodeId)] as Record<string, unknown> | undefined
+      : undefined
+    let clipSource = posEntry ? (posEntry.inputs as Record<string, unknown>)?.clip : undefined
+
+    for (let guard = 0; guard < 10 && Array.isArray(clipSource); guard++) {
+      const src = prompt[clipSource[0] as string] as Record<string, unknown> | undefined
+      if (src && (src.class_type === 'LoraLoader' || src.class_type === 'LoraLoaderModelOnly')) {
+        clipSource = (src.inputs as Record<string, unknown>)?.clip
+      } else {
+        break
+      }
+    }
+    if (!Array.isArray(clipSource)) {
+      skip('Entrada de CLIP não encontrada no workflow; sem regional.')
+      return
+    }
+
+    // Pula o AnimaTeaCache: caches que pulam evals do denoiser conflitam com
+    // Attention Coupling (a mesma razão pela qual LazyCache é rejeitado).
+    let modelSource: unknown = kInputs.model
+    for (let guard = 0; guard < 5 && Array.isArray(modelSource); guard++) {
+      const src = prompt[modelSource[0] as string] as Record<string, unknown> | undefined
+      if (src && src.class_type === 'AnimaTeaCache') {
+        modelSource = (src.inputs as Record<string, unknown>)?.model
+      } else {
+        break
+      }
+    }
+    if (!Array.isArray(modelSource)) {
+      skip('Fonte de MODEL não encontrada; sem regional.')
+      return
+    }
+
+    const clamp = (v: number, fallback: number): number =>
+      Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : fallback
+
+    // Prompt positivo segmentado: cada região repete a descrição global e carrega
+    // seu próprio LoRA; o negativo fica só com o texto global (o alinhamento do
+    // SimpleSyrup sintetiza as entradas regionais negativas a partir dele).
+    const caption = params.prompt
+    let positivePrompt = caption
+    for (const { sepLabel, slot } of slots) {
+      const sModel = clamp(slot.strengthModel, 0.8)
+      const sClip = 0
+      positivePrompt += ` [SEP|${sepLabel}] ${caption} <lora:${slot.name}:${sModel}:${sClip}>`
+    }
+
+    const scheduleId = 86001
+    prompt[String(scheduleId)] = {
+      class_type: 'SimpleSyrup.ScheduleAndEncodePromptsWithPromptControl',
+      _meta: { title: 'Schedule & Encode (regional)' },
+      inputs: {
+        model: modelSource,
+        clip: clipSource,
+        positive_prompt: positivePrompt,
+        negative_prompt: params.negativePrompt || ''
+      }
+    }
+
+    const detectInputs = (detectorRef: [string, number]): Record<string, unknown> => ({
+      image: ['99990', 0],
+      detector_model: detectorRef,
+      confidence_threshold: 0.5,
+      size_threshold: 10,
+      keep_only: 0,
+      keep_by: 'highest confidence',
+      bbox_dilation: 0,
+      sub_dilation: 0,
+      post_dilation: 0,
+      crop_factor: 3.0,
+      sort_order: 'largest to smallest',
+      combine_segs: true
+    })
+
+    // Ordem das máscaras = ordem dos segmentos [SEP] (rosto, depois seios)
+    const maskRefs: Array<[string, number]> = []
+    if (regional.face) {
+      prompt['86010'] = {
+        class_type: 'SimpleSyrup.LoadUltralyticsModel',
+        _meta: { title: 'Ultralytics (rosto)' },
+        inputs: { model_name: 'bbox/face_yolov8m.pt' }
+      }
+      prompt['86011'] = {
+        class_type: 'SimpleSyrup.DetectSEGSWithUltralytics',
+        _meta: { title: 'Detecção de rosto' },
+        inputs: detectInputs(['86010', 0])
+      }
+      maskRefs.push(['86011', 1])
+    }
+    if (regional.breasts) {
+      prompt['86012'] = {
+        class_type: 'SimpleSyrup.LoadUltralyticsModel',
+        _meta: { title: 'Ultralytics (seios)' },
+        inputs: { model_name: 'Anzhc Breasts Seg v1 1024n (6.58MB)' }
+      }
+      prompt['86013'] = {
+        class_type: 'SimpleSyrup.DetectSEGSWithUltralytics',
+        _meta: { title: 'Detecção de seios' },
+        inputs: detectInputs(['86012', 0])
+      }
+      maskRefs.push(['86013', 1])
+    }
+
+    let regionMasksRef: [string, number]
+    if (maskRefs.length === 1) {
+      regionMasksRef = maskRefs[0]
+    } else {
+      prompt['86014'] = {
+        class_type: 'MaskBatchMulti',
+        _meta: { title: 'Batch de máscaras regionais' },
+        inputs: {
+          inputcount: maskRefs.length,
+          mask_1: maskRefs[0],
+          mask_2: maskRefs[1]
+        }
+      }
+      regionMasksRef = ['86014', 0]
+    }
+
+    // Encoding e cache antigos não são mais consumidos pelo sampler
+    if (data.positiveNodeId !== null) delete prompt[String(data.positiveNodeId)]
+    if (data.negativeNodeId !== null) delete prompt[String(data.negativeNodeId)]
+    for (const key of Object.keys(prompt)) {
+      const entry = prompt[key] as { class_type?: string }
+      if (entry.class_type === 'AnimaTeaCache') delete prompt[key]
+    }
+
+    ksamplerEntry.class_type = 'SimpleSyrup.KSamplerAttentionCoupling'
+    kInputs.model = [String(scheduleId), 0]
+    kInputs.positive = [String(scheduleId), 1]
+    kInputs.negative = [String(scheduleId), 2]
+    kInputs.region_masks = regionMasksRef
+    kInputs.regional_prompt_weight = 1.0
+    kInputs.region_mask_feather = 16
+
+    console.log(
+      `[Anima] Regional injetado: ${slots.map(s => s.sepLabel).join('+')} | ` +
+      `prompt segmentado (${slots.length + 1} entradas), máscaras em ${regionMasksRef[0]}`
+    )
   }
 
   /**

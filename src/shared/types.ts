@@ -52,6 +52,20 @@ export interface LoraSelection {
 // Limite de LoRAs encadeados por geração (proteção contra payloads absurdos)
 export const MAX_LORAS = 10
 
+// LoRA aplicado a uma região da imagem (teste de regional prompting).
+// O nome é resolvido pelo Prompt Control dentro da pasta de LoRAs do perfil.
+export interface RegionalLoraSlot {
+  name: string
+  strengthModel: number
+  strengthClip: number
+}
+
+// Regiões suportadas pelo teste: rosto (detecção de face) e seios (segmentação)
+export interface RegionalParams {
+  face?: RegionalLoraSlot | null
+  breasts?: RegionalLoraSlot | null
+}
+
 export interface GenerationParams {
   diffusionModel: DiffusionModelId
   prompt: string
@@ -74,6 +88,8 @@ export interface GenerationParams {
   poseImageFilename?: string
   lineThickness?: number
   safeZone?: number
+  // LoRAs por região (teste — apenas perfil anima)
+  regional?: RegionalParams
 }
 
 export interface GenerationResult {
