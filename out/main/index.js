@@ -812,7 +812,15 @@ class ComfyUIClient {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "erro desconhecido";
         console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err);
-        attemptErrors.push(`${nodeType}: ${msg.slice(0, 220)}`);
+        let friendlyMsg = msg.slice(0, 220);
+        if (msg.includes("[Errno 22] Invalid argument") && nodeType.toLowerCase().includes("wd14")) {
+          friendlyMsg = "Modelo WD14 ausente — baixe os .onnx (wd14_vit_v2.onnx, etc.) em models/wd14tagger/ e reinicie o ComfyUI";
+        } else if (msg.includes("prompt_no_outputs") && nodeType.toLowerCase().includes("florence")) {
+          friendlyMsg = 'Florence2 sem modelo — instale "Florence-2" pelo ComfyUI Manager (aba Models) e reinicie';
+        } else if (msg.includes("prompt_no_outputs") && nodeType.toLowerCase().includes("joycaption")) {
+          friendlyMsg = "JoyCaption sem modelo — instale o modelo correspondente pelo Manager e reinicie";
+        }
+        attemptErrors.push(`${nodeType}: ${friendlyMsg}`);
         continue;
       }
     }
@@ -1611,6 +1619,7 @@ class WorkflowManager {
     const slots = [];
     if (regional.face) slots.push({ sepLabel: "rosto", slot: regional.face });
     if (regional.breasts) slots.push({ sepLabel: "seios", slot: regional.breasts });
+    if (regional.body) slots.push({ sepLabel: "corpo", slot: regional.body });
     if (slots.length === 0) return;
     const skip = (message) => {
       warnings.push(message);
@@ -1674,12 +1683,13 @@ class WorkflowManager {
       return;
     }
     const clamp = (v, fallback) => Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : fallback;
-    const caption = params.prompt;
+    const maxCaptionLen = 1500;
+    const caption = params.prompt.length > maxCaptionLen ? params.prompt.slice(0, maxCaptionLen).trim() : params.prompt;
     let positivePrompt = caption;
     for (const { sepLabel, slot } of slots) {
       const sModel = clamp(slot.strengthModel, 0.8);
       const sClip = 0;
-      positivePrompt += ` [SEP|${sepLabel}] ${caption} <lora:${slot.name}:${sModel}:${sClip}>`;
+      positivePrompt += ` [SEP|${sepLabel}] <lora:${slot.name}:${sModel}:${sClip}>`;
     }
     const scheduleId = 86001;
     prompt[String(scheduleId)] = {
@@ -1732,6 +1742,19 @@ class WorkflowManager {
         inputs: detectInputs(["86012", 0])
       };
       maskRefs.push(["86013", 1]);
+    }
+    if (regional.body) {
+      prompt["86015"] = {
+        class_type: "SimpleSyrup.LoadUltralyticsModel",
+        _meta: { title: "Ultralytics (corpo)" },
+        inputs: { model_name: "segm/person_yolov8m-seg.pt" }
+      };
+      prompt["86016"] = {
+        class_type: "SimpleSyrup.DetectSEGSWithUltralytics",
+        _meta: { title: "Detecção de corpo" },
+        inputs: detectInputs(["86015", 0])
+      };
+      maskRefs.push(["86016", 1]);
     }
     let regionMasksRef;
     if (maskRefs.length === 1) {

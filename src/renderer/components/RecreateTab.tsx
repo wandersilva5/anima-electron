@@ -22,7 +22,7 @@ export function RecreateTab() {
   const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
   const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.65)
   const [regional, setRegional] = useState<RegionalSettings>(
-    savedSettings.regional ?? { enabled: false, face: null, breasts: null }
+    savedSettings.regional ?? { enabled: false, face: null, breasts: null, body: null }
   )
   const [regionalOpen, setRegionalOpen] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
@@ -167,8 +167,9 @@ export function RecreateTab() {
         slot && loras.some(l => l.name === slot.name) ? slot : null
       const regionalFace = validSlot(regional.face)
       const regionalBreasts = validSlot(regional.breasts)
-      const regionalParam = regional.enabled && (regionalFace || regionalBreasts)
-        ? { face: regionalFace, breasts: regionalBreasts }
+      const regionalBody = validSlot(regional.body)
+      const regionalParam = regional.enabled && (regionalFace || regionalBreasts || regionalBody)
+        ? { face: regionalFace, breasts: regionalBreasts, body: regionalBody }
         : undefined
 
       const result = await window.electronAPI.comfyui.generateImprove({
@@ -540,7 +541,7 @@ export function RecreateTab() {
                     <span className="text-[9px] uppercase tracking-wider text-accent font-semibold normal-case px-1 py-0.5 rounded bg-accent/10">teste</span>
                     {regional.enabled && (
                       <span className="text-[10px] text-accent font-normal normal-case">
-                        ({[regional.face ? 'rosto' : null, regional.breasts ? 'seios' : null].filter(Boolean).join(', ') || 'ativo'})
+                        ({[regional.face ? 'rosto' : null, regional.breasts ? 'seios' : null, regional.body ? 'corpo' : null].filter(Boolean).join(', ') || 'ativo'})
                       </span>
                     )}
                   </button>
@@ -581,6 +582,13 @@ export function RecreateTab() {
                       loras={loras}
                       disabled={generating}
                       onChange={(slot) => setRegional(r => ({ ...r, breasts: slot }))}
+                    />
+                    <RegionalSlotRow
+                      label="Corpo"
+                      value={regional.body}
+                      loras={loras}
+                      disabled={generating}
+                      onChange={(slot) => setRegional(r => ({ ...r, body: slot }))}
                     />
                   </div>
                 )}

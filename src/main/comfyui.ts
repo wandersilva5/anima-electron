@@ -455,7 +455,15 @@ export class ComfyUIClient {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'erro desconhecido'
         console.warn(`[ComfyUIClient] Falha ao executar nó ${nodeType}:`, err)
-        attemptErrors.push(`${nodeType}: ${msg.slice(0, 220)}`)
+        let friendlyMsg = msg.slice(0, 220)
+        if (msg.includes('[Errno 22] Invalid argument') && nodeType.toLowerCase().includes('wd14')) {
+          friendlyMsg = 'Modelo WD14 ausente — baixe os .onnx (wd14_vit_v2.onnx, etc.) em models/wd14tagger/ e reinicie o ComfyUI'
+        } else if (msg.includes('prompt_no_outputs') && nodeType.toLowerCase().includes('florence')) {
+          friendlyMsg = 'Florence2 sem modelo — instale "Florence-2" pelo ComfyUI Manager (aba Models) e reinicie'
+        } else if (msg.includes('prompt_no_outputs') && nodeType.toLowerCase().includes('joycaption')) {
+          friendlyMsg = 'JoyCaption sem modelo — instale o modelo correspondente pelo Manager e reinicie'
+        }
+        attemptErrors.push(`${nodeType}: ${friendlyMsg}`)
         continue
       }
     }

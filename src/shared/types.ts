@@ -60,10 +60,11 @@ export interface RegionalLoraSlot {
   strengthClip: number
 }
 
-// Regiões suportadas pelo teste: rosto (detecção de face) e seios (segmentação)
+// Regiões suportadas pelo teste: rosto (detecção de face), seios e corpo (segmentação)
 export interface RegionalParams {
   face?: RegionalLoraSlot | null
   breasts?: RegionalLoraSlot | null
+  body?: RegionalLoraSlot | null
 }
 
 export interface GenerationParams {

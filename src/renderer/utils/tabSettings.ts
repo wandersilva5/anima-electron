@@ -11,6 +11,7 @@ export interface RegionalSettings {
   enabled: boolean
   face: RegionalLoraSlot | null
   breasts: RegionalLoraSlot | null
+  body: RegionalLoraSlot | null
 }
 
 interface TabSettings {

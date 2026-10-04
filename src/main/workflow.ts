@@ -685,6 +685,7 @@ export class WorkflowManager {
     const slots: Array<{ sepLabel: string; slot: RegionalLoraSlot }> = []
     if (regional.face) slots.push({ sepLabel: 'rosto', slot: regional.face })
     if (regional.breasts) slots.push({ sepLabel: 'seios', slot: regional.breasts })
+    if (regional.body) slots.push({ sepLabel: 'corpo', slot: regional.body })
     if (slots.length === 0) return
 
     const skip = (message: string): void => {
@@ -764,15 +765,19 @@ export class WorkflowManager {
     const clamp = (v: number, fallback: number): number =>
       Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : fallback
 
-    // Prompt positivo segmentado: cada região repete a descrição global e carrega
-    // seu próprio LoRA; o negativo fica só com o texto global (o alinhamento do
-    // SimpleSyrup sintetiza as entradas regionais negativas a partir dele).
-    const caption = params.prompt
+    // Prompt positivo segmentado: o prompt base aplica-se a todas as regiões;
+    // cada [SEP|região] adiciona apenas seu LoRA (sem repetir a legenda).
+    // Trunca a legenda para ~1500 chars (~380 tokens) para caber no limite
+    // de 512 tokens do CLIP (somando [SEP|...] + tags <lora:...>).
+    const maxCaptionLen = 1500
+    const caption = params.prompt.length > maxCaptionLen
+      ? params.prompt.slice(0, maxCaptionLen).trim()
+      : params.prompt
     let positivePrompt = caption
     for (const { sepLabel, slot } of slots) {
       const sModel = clamp(slot.strengthModel, 0.8)
       const sClip = 0
-      positivePrompt += ` [SEP|${sepLabel}] ${caption} <lora:${slot.name}:${sModel}:${sClip}>`
+      positivePrompt += ` [SEP|${sepLabel}] <lora:${slot.name}:${sModel}:${sClip}>`
     }
 
     const scheduleId = 86001
@@ -802,7 +807,7 @@ export class WorkflowManager {
       combine_segs: true
     })
 
-    // Ordem das máscaras = ordem dos segmentos [SEP] (rosto, depois seios)
+    // Ordem das máscaras = ordem dos segmentos [SEP] (rosto, depois seios, depois corpo)
     const maskRefs: Array<[string, number]> = []
     if (regional.face) {
       prompt['86010'] = {
@@ -829,6 +834,19 @@ export class WorkflowManager {
         inputs: detectInputs(['86012', 0])
       }
       maskRefs.push(['86013', 1])
+    }
+    if (regional.body) {
+      prompt['86015'] = {
+        class_type: 'SimpleSyrup.LoadUltralyticsModel',
+        _meta: { title: 'Ultralytics (corpo)' },
+        inputs: { model_name: 'segm/person_yolov8m-seg.pt' }
+      }
+      prompt['86016'] = {
+        class_type: 'SimpleSyrup.DetectSEGSWithUltralytics',
+        _meta: { title: 'Detecção de corpo' },
+        inputs: detectInputs(['86015', 0])
+      }
+      maskRefs.push(['86016', 1])
     }
 
     let regionMasksRef: [string, number]
