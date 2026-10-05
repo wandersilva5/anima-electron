@@ -84,6 +84,12 @@ function parseTags(raw) {
       } else {
         elements.hair.styles.push(tag);
       }
+    } else if (/sad|sorrow|unhappy|lonely|happy|joy|delight|excit|surpris|shock|scare|afraid|fear|nervous|anxious|embarrass|shy|timid|bored|tired|sleepy|drowsy|calm|relaxed|neutral|expressionless|blank stare|seduct|allur|teasing|playful|cheerful|smile|smiling|laugh|giggle|grin|smirk|smug|frown|pout|pursed lips|open mouth|mouth open|parted lips|closed mouth|:d|tongue out|licking|lip bite|biting lip|wink|one eye closed|eyes closed|closed eyes|half-closed|narrowed|wide eyes|sparkling|shining eyes|wet eyes|cry|crying|sob|tear|sweat|sweatdrop|drool|saliva|blush|angry|annoyed|irritat|serious|stern|confident|defiant|determined|dazed|confus|distract|jealous|worried|eyebrow|furrowed|raised brow|scowl|glare|tongue|gaze|looking|glance|stare|facing|head (down|up|tilt)|side profile/i.test(tag) && !/view|angle|focus|shot|portrait|full body|upper body|lower body|cowboy/i.test(tag)) {
+      if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
+        elements.pose.orientation.push(tag);
+      } else {
+        elements.expression.push(tag);
+      }
     } else if (/eyes?|pupil|iris|glint|sclera|heterochromia/i.test(tag) && !/eyepatch|glasses/i.test(tag)) {
       if (/blue|red|green|brown|amber|yellow|purple|black|golden|hazel/i.test(tag)) {
         elements.eyes.colors.push(tag);
@@ -92,12 +98,6 @@ function parseTags(raw) {
       }
     } else if (/\bglasses\b|\beyepatch\b|\bmask\b|\bearrings?\b|\bhorns?\b|\bears?\b|\banimal ears\b|\bcat ears\b|\bfox ears\b|\bfangs?\b|\bmakeup\b|\blipstick\b|\bdelicate\b|\byouthful\b/i.test(tag) && !/hair/i.test(tag)) {
       elements.face.push(tag);
-    } else if (/smile|grin|smirk|blush|frown|cry|tear|sweat|angry|serious|confident|defiant|determined|open mouth|parted lips|tongue|gaze|looking|glance|stare|facing|head (down|up|tilt)|side profile/i.test(tag) && !/view|angle|focus|shot|portrait|full body|upper body|lower body|cowboy/i.test(tag)) {
-      if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
-        elements.pose.orientation.push(tag);
-      } else {
-        elements.expression.push(tag);
-      }
     } else if (/breast|bust|boob|nipple|perky|\bfirm\b|flat chest|oppai|cleavage|sideboob|deep v|plunge/i.test(tag) && !/band|seam|trim|fringe|ruffle|cup\b|panel|bodice|bodysuit|bikini|neckline|collar|halter|neck\b|strap|tie|lace/i.test(tag)) {
       elements.body.push(tag);
     } else if (/bikini|swimsuit|swimwear|one.?piece|monokini|tankini|microkini|brazilian|tie.?side|halter|teardrop|push.?up|underwire|belted|corset|criss.?cross|cross.?over|ruffle|fringe|bandeau|asymmetr|one.?shoulder|bodysuit|lingerie|negligee|leotard|bunny.?suit|race queen|uniform|school uniform|serafuku|suit|dress|kimono|yukata|costume|outfit|bodice|jumpsuit|playsuit/i.test(tag)) {
@@ -351,10 +351,20 @@ function synthesizeDescriptiveCaption(raw) {
     } else {
       sections.push(`Pose: The character holds a ${attitudeWord} stance facing the viewer, with relaxed arms at ${possessive} sides and even weight distribution. ${poseKeepLock}`);
     }
-    if (el.expression.length > 0) {
-      sections.push(`Expression: An expression of ${formatList(el.expression)}, communicating emotional depth and intent.`);
+    const eyeEmotionCues = el.eyes.features.filter(
+      (f) => /closed|wink|half|narrow|wide|sparkl|shining|wet|cry|tear|glint|half-closed|one eye/i.test(f)
+    );
+    const gazeCues = el.pose.orientation.filter(
+      (o) => /looking|gaze|glance|stare|facing|over shoulder|head (down|up|tilt)/i.test(o)
+    );
+    const expressionParts = [...el.expression, ...eyeEmotionCues];
+    if (expressionParts.length > 0) {
+      const gazePart = gazeCues.length > 0 ? `, with ${formatList(gazeCues)}` : "";
+      sections.push(`Expression: An expression of ${formatList(expressionParts)}${gazePart}, communicating emotional depth and intent.`);
+    } else if (gazeCues.length > 0) {
+      sections.push(`Expression: A neutral relaxed expression, with ${formatList(gazeCues)}, conveying calm presence.`);
     } else {
-      sections.push(`Expression: An expression of quiet confidence, determination, or a subtle calm smile.`);
+      sections.push(`Expression: A neutral relaxed expression with soft gaze toward the viewer, conveying calm presence.`);
     }
     if (el.objects.length > 0) {
       sections.push(`Objects: Features ${formatList(el.objects)} integrated into the immediate vicinity.`);
@@ -461,7 +471,7 @@ const CAPTION_NOISE_PATTERNS = [
 const CAPTION_CATEGORY_ORDER = [
   /^(\d+\+?(girl|boy|other)s?|multiple (girls|boys|views)|solo|couple|group|crowd|no humans)$/,
   /(hair|eyes|eye|skin|breast|body|ears|horn|tail|wing|freckle|mole|scar|muscle|navel|thigh|leg|arm|shoulder|neck|feet|foot)/,
-  /(smile|blush|expression|face|mouth|tongue|lip|grin|frown|cry|crying|tears|sweat|glasses|makeup|eyepatch|forehead|nose)/,
+  /(smile|smiling|laugh|grin|smirk|smug|pout|happy|sad|surpris|shock|scare|afraid|embarrass|shy|angry|serious|neutral|expressionless|seduct|playful|cheerful|blush|expression|face|mouth|tongue|lip|frown|cry|crying|sob|tears|sweat|drool|wink|closed eyes|half-closed|narrowed|wide eyes|gaze|glasses|makeup|eyepatch|forehead|nose|eyebrow)/,
   /(dress|shirt|skirt|pant|short|jacket|coat|bra|panties|lingerie|sock|shoe|boot|heel|hat|cap|glove|scarf|tie|ribbon|necklace|earring|jewelry|bracelet|ring|armor|helmet|uniform|costume|clothes|clothing|nude|topless|barefoot|bare|collar|leash|belt|bag|backpack|weapon|sword|staff)/,
   /(stand|sit|lying|lie|kneel|squat|crouch|walk|run|jump|crawl|bend|lean|stretch|hand|finger|pose|from behind|hug|kiss|hold|carry|pull|push|reach|wave|point|covering|pov|sitting|standing)/,
   /(background|outdoors|indoors|sky|beach|forest|city|room|water|nature|scenery|night|day|sunset|sunrise|building|street|window|door|bed|chair|table|floor|wall|grass|tree|flower|leaf|mountain|ocean|sea|river|lake|cloud|star|moon|sun|rain|snow|wind)/

@@ -45,7 +45,7 @@ const CAPTION_NOISE_PATTERNS: RegExp[] = [
 const CAPTION_CATEGORY_ORDER: RegExp[] = [
   /^(\d+\+?(girl|boy|other)s?|multiple (girls|boys|views)|solo|couple|group|crowd|no humans)$/,
   /(hair|eyes|eye|skin|breast|body|ears|horn|tail|wing|freckle|mole|scar|muscle|navel|thigh|leg|arm|shoulder|neck|feet|foot)/,
-  /(smile|blush|expression|face|mouth|tongue|lip|grin|frown|cry|crying|tears|sweat|glasses|makeup|eyepatch|forehead|nose)/,
+  /(smile|smiling|laugh|grin|smirk|smug|pout|happy|sad|surpris|shock|scare|afraid|embarrass|shy|angry|serious|neutral|expressionless|seduct|playful|cheerful|blush|expression|face|mouth|tongue|lip|frown|cry|crying|sob|tears|sweat|drool|wink|closed eyes|half-closed|narrowed|wide eyes|gaze|glasses|makeup|eyepatch|forehead|nose|eyebrow)/,
   /(dress|shirt|skirt|pant|short|jacket|coat|bra|panties|lingerie|sock|shoe|boot|heel|hat|cap|glove|scarf|tie|ribbon|necklace|earring|jewelry|bracelet|ring|armor|helmet|uniform|costume|clothes|clothing|nude|topless|barefoot|bare|collar|leash|belt|bag|backpack|weapon|sword|staff)/,
   /(stand|sit|lying|lie|kneel|squat|crouch|walk|run|jump|crawl|bend|lean|stretch|hand|finger|pose|from behind|hug|kiss|hold|carry|pull|push|reach|wave|point|covering|pov|sitting|standing)/,
   /(background|outdoors|indoors|sky|beach|forest|city|room|water|nature|scenery|night|day|sunset|sunrise|building|street|window|door|bed|chair|table|floor|wall|grass|tree|flower|leaf|mountain|ocean|sea|river|lake|cloud|star|moon|sun|rain|snow|wind)/
