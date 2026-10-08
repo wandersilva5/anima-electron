@@ -1,5 +1,14 @@
-// Identificador dos 3 modelos de difusão suportados
-export type DiffusionModelId = 'anima' | 'krea2' | 'z-image'
+// Identificador dos modelos de difusão suportados
+export type DiffusionModelId = 'anima' | 'krea2' | 'qwen-image' | 'z-image'
+
+/**
+ * Modo de edição da aba Melhoria (Qwen Image 2.1):
+ * - edit: edição nativa do 2.1 (amostra no latent do TextEncodeQwenImage21,
+ *   com a imagem de origem referenciada como <image1>)
+ * - refine: img2img clássico com força (denoise) controlável
+ * - inpaint: img2img com máscara (área marcada com o pincel)
+ */
+export type ImproveEditMode = 'edit' | 'refine' | 'inpaint'
 
 // Perfil completo de um modelo de difusão
 export interface ModelProfile {
@@ -7,10 +16,12 @@ export interface ModelProfile {
   label: string
   description: string
   workflowFile: string
-  /** Workflow alternativo usado pela aba POSE (transferência de pose por referência visual) */
+  /** Workflow da aba POSE (VNCCS Pose Studio QI2.1), carregado no webview do ComfyUI */
   poseWorkflowFile?: string
   /** Workflow alternativo usado pela aba ROUPA (transferência de roupa por referência visual) */
   outfitWorkflowFile?: string
+  /** Workflow usado pela aba MELHORIA (edição img2img com imagem de referência opcional) */
+  improveWorkflowFile?: string
   loraFolder: string
   hasNegativePrompt: boolean
   hasLoraClipStrength: boolean
@@ -24,10 +35,14 @@ export interface ModelProfile {
   }
 }
 
-/** Parâmetros para geração de pose via workflow dedicado (sem DWPose) */
+/** Parâmetros para geração de pose via workflow VNCCS Pose Studio (Qwen-Image 2.1) */
 export interface PoseGenerationParams {
   charImageBase64: string      // Imagem da personagem (identidade)
-  poseImageBase64: string      // Imagem de referência de pose
+  /**
+   * Prompt no formato da API do ComfyUI, serializado pelo próprio frontend
+   * embarcado (app.graphToPrompt()). O main só sobrescreve imagem/seed/prefixo.
+   */
+  promptApi?: Record<string, unknown>
   seed?: number
   filenamePrefix?: string
   modelName?: string           // Checkpoint opcional
@@ -91,6 +106,10 @@ export interface GenerationParams {
   safeZone?: number
   // LoRAs por região (teste — apenas perfil anima)
   regional?: RegionalParams
+  // Modo de edição (aba Melhoria, Qwen Image 2.1)
+  editMode?: ImproveEditMode
+  /** Arquivo da imagem de referência extra (slot <image2>) já enviado ao ComfyUI */
+  refImagePath?: string
 }
 
 export interface GenerationResult {

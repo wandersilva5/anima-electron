@@ -1047,7 +1047,7 @@ const MODEL_PROFILES = {
     label: "Krea2",
     description: "Krea2 Turbo — geração rápida, sem prompt negativo",
     workflowFile: "Krea2 - Simples.json",
-    poseWorkflowFile: "Krea2-Pose.json",
+    poseWorkflowFile: "VNCCS-PoseStudio-QI21.json",
     outfitWorkflowFile: "Krea2-Outfit.json",
     loraFolder: "Krea2",
     hasNegativePrompt: false,
@@ -1635,6 +1635,15 @@ class WorkflowManager {
       warnings.push(message);
       console.warn(`[WorkflowManager] Regional ignorado: ${message}`);
     };
+    const activeSlots = slots.filter(
+      (s) => (s.slot.strengthModel ?? 0) > 0 || (s.slot.strengthClip ?? 0) > 0
+    );
+    if (activeSlots.length === 0) {
+      skip("LoRAs por região com força zerada; geração segue sem regional.");
+      return;
+    }
+    slots.length = 0;
+    slots.push(...activeSlots);
     if (params.diffusionModel !== "anima") {
       skip("LoRAs por região disponíveis apenas no modelo anima. Geração segue sem regional.");
       return;
@@ -1715,7 +1724,7 @@ class WorkflowManager {
     const detectInputs = (detectorRef) => ({
       image: ["99990", 0],
       detector_model: detectorRef,
-      confidence_threshold: 0.5,
+      confidence_threshold: 0.35,
       size_threshold: 10,
       keep_only: 0,
       keep_by: "highest confidence",
@@ -1770,14 +1779,14 @@ class WorkflowManager {
     if (maskRefs.length === 1) {
       regionMasksRef = maskRefs[0];
     } else {
+      const batchInputs = { inputcount: maskRefs.length };
+      maskRefs.forEach((ref, i) => {
+        batchInputs[`mask_${i + 1}`] = ref;
+      });
       prompt["86014"] = {
         class_type: "MaskBatchMulti",
         _meta: { title: "Batch de máscaras regionais" },
-        inputs: {
-          inputcount: maskRefs.length,
-          mask_1: maskRefs[0],
-          mask_2: maskRefs[1]
-        }
+        inputs: batchInputs
       };
       regionMasksRef = ["86014", 0];
     }
@@ -1799,16 +1808,6 @@ class WorkflowManager {
     );
   }
   /**
-   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Pose.
-   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
-   *   image1 = personagem (identidade) → nó LoadImage id 4
-   *   image2 = referência de pose      → nó LoadImage id 5
-   * Não usa DWPose nem ControlNet.
-   */
-  buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath) {
-    return this.buildTwoImagePrompt(poseWorkflowPath, charFilename, poseFilename, seed);
-  }
-  /**
    * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
    * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
    *   image1 = personagem (identidade)   → nó LoadImage id 4
@@ -1819,7 +1818,7 @@ class WorkflowManager {
     return this.buildTwoImagePrompt(outfitWorkflowPath, charFilename, outfitFilename, seed);
   }
   /**
-   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Pose/Krea2-Outfit).
+   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Outfit).
    * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
    */
   buildTwoImagePrompt(workflowPath, image1Filename, image2Filename, seed) {
@@ -2375,16 +2374,16 @@ function sanitizeGenerationParams(raw) {
         const s = v;
         const name = strOrNull(s.name);
         if (!name || name.length > 300) return null;
-        return {
-          name,
-          strengthModel: num(s.strengthModel, 0.8, 0, 2),
-          strengthClip: num(s.strengthClip, 0.8, 0, 2)
-        };
+        const strengthModel = num(s.strengthModel, 0.8, 0, 2);
+        const strengthClip = num(s.strengthClip, 0.8, 0, 2);
+        if (strengthModel <= 0 && strengthClip <= 0) return null;
+        return { name, strengthModel, strengthClip };
       };
       const face = slot(r.face);
       const breasts = slot(r.breasts);
-      if (!face && !breasts) return void 0;
-      return { face, breasts };
+      const body = slot(r.body);
+      if (!face && !breasts && !body) return void 0;
+      return { face, breasts, body };
     })()
   };
 }
@@ -2433,7 +2432,10 @@ function createWindow() {
       preload: join(__dirname, "../preload/index.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // O editor VNCCS Pose Studio (3D pose + captura) só existe na UI do
+      // ComfyUI; a aba Pose embute essa UI em <webview>.
+      webviewTag: true
     },
     show: false,
     backgroundColor: "#0f0f13",
@@ -2529,23 +2531,40 @@ function setupIPC() {
     try {
       const availableNodes = await comfyClient.getAvailableNodes();
       const warnings = [];
-      const prompt = workflowManager.buildPrompt(improveParams, { availableNodes, warnings });
-      console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
-      const response = await comfyClient.sendPrompt(prompt);
-      console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
-      if (Object.keys(response.node_errors ?? {}).length > 0) {
-        console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
-        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
-      }
-      const images = await comfyClient.waitForResult(
-        response.prompt_id,
-        (current, max) => {
-          mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+      const onProgress = (promptId) => (current, max) => {
+        mainWindow?.webContents.send("comfyui:progress", { current, max, promptId });
+      };
+      const runOnce = async (p) => {
+        const prompt = workflowManager.buildPrompt(p, { availableNodes, warnings });
+        console.log("[Anima] Prompt img2img construído, nós:", Object.keys(prompt).length);
+        const response = await comfyClient.sendPrompt(prompt);
+        console.log("[Anima] Prompt enviado, ID:", response.prompt_id);
+        if (Object.keys(response.node_errors ?? {}).length > 0) {
+          console.error("[Anima] Erros nos nós:", JSON.stringify(response.node_errors));
+          throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
         }
-      );
-      console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
-      const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams, params.filenamePrefix || "anima-improve");
-      return { promptId: response.prompt_id, images: savedImages, warning: warnings.join(" ") || void 0 };
+        const images = await comfyClient.waitForResult(response.prompt_id, onProgress(response.prompt_id));
+        return { promptId: response.prompt_id, images };
+      };
+      try {
+        const { promptId, images } = await runOnce(improveParams);
+        console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`);
+        const savedImages = saveImagesToHistory(promptId, images, improveParams, params.filenamePrefix || "anima-improve");
+        return { promptId, images: savedImages, warning: warnings.join(" ") || void 0 };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const emptyDetection = msg.includes("lifecycle owners cannot be empty") || msg.includes("composition cannot be empty");
+        if (improveParams.regional && emptyDetection) {
+          console.warn("[Anima] Regional sem máscara válida, repetindo sem regional:", msg.slice(0, 200));
+          warnings.push("LoRAs por região desativados nesta imagem (detecção não encontrou a região); gerada sem regional.");
+          const fallback = { ...improveParams, regional: void 0 };
+          const { promptId, images } = await runOnce(fallback);
+          console.log(`[Anima] Melhoria concluída sem regional, ${images.length} imagem(ns)`);
+          const savedImages = saveImagesToHistory(promptId, images, fallback, params.filenamePrefix || "anima-improve");
+          return { promptId, images: savedImages, warning: warnings.join(" ") || void 0 };
+        }
+        throw err;
+      }
     } finally {
       removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir);
     }
@@ -2554,18 +2573,12 @@ function setupIPC() {
     requireMainWindow(event);
     const p = rawParams && typeof rawParams === "object" ? rawParams : {};
     const charImageBase64 = typeof p.charImageBase64 === "string" ? p.charImageBase64 : null;
-    const poseImageBase64 = typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : null;
+    const promptApi = p.promptApi && typeof p.promptApi === "object" && !Array.isArray(p.promptApi) ? p.promptApi : null;
     const seed = typeof p.seed === "number" ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647);
     const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-pose";
     if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
-    if (!poseImageBase64) throw new Error("Imagem de pose não fornecida");
-    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile;
-    if (!poseWorkflowFile) {
-      throw new Error("Perfil krea2 não define poseWorkflowFile");
-    }
-    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile);
-    if (!existsSync(poseWorkflowPath)) {
-      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`);
+    if (!promptApi || Object.keys(promptApi).length === 0) {
+      throw new Error("Pose não configurada — ajuste a pose no editor VNCCS Pose Studio antes de gerar");
     }
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
@@ -2573,31 +2586,59 @@ function setupIPC() {
     const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/);
     const charExt = charMatch ? charMatch[1] === "jpeg" ? "jpg" : charMatch[1] : "png";
     const charFilename = `anima-pose-char-${Date.now()}.${charExt}`;
-    const poseMatch = poseImageBase64.match(/^data:image\/(\w+);base64,/);
-    const poseExt = poseMatch ? poseMatch[1] === "jpeg" ? "jpg" : poseMatch[1] : "png";
-    const poseFilename = `anima-pose-ref-${Date.now()}.${poseExt}`;
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl);
-    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl);
-    console.log("[Anima] Pose: personagem=%s, referência=%s", charFilename, poseFilename);
+    console.log("[Anima] Pose Studio: personagem=%s", charFilename);
     try {
-      const prompt = workflowManager.buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath);
-      console.log("[Anima] Pose prompt construído, nós:", Object.keys(prompt).length);
-      const readNumInput = (nodeId, inputName, fallback) => {
-        const node = prompt[nodeId];
-        const val = node?.inputs?.[inputName];
+      const prompt = promptApi;
+      const keys = Object.keys(prompt);
+      let poseStudioNode = null;
+      const imageKeys = keys.filter((k) => prompt[k]?.class_type === "LoadImage");
+      const imageKey = imageKeys.includes("470") ? "470" : imageKeys.length === 1 ? imageKeys[0] : null;
+      if (!imageKey) {
+        throw new Error(imageKeys.length === 0 ? "Workflow de pose inválido: nó LoadImage não encontrado" : "Workflow de pose inválido: múltiplos nós LoadImage — use o workflow da aba Pose");
+      }
+      for (const key of keys) {
+        const node = prompt[key];
+        if (!node?.inputs) continue;
+        if (key === imageKey) {
+          node.inputs.image = charFilename;
+          delete node.inputs.upload;
+        } else if (node.class_type === "KSampler") {
+          node.inputs.seed = seed;
+        } else if (node.class_type === "SaveImage") {
+          node.inputs.filename_prefix = filenamePrefix;
+        } else if (node.class_type === "VNCCS_PoseStudio") {
+          poseStudioNode = node;
+        }
+      }
+      if (!poseStudioNode) throw new Error("Workflow de pose inválido: nó VNCCS_PoseStudio não encontrado");
+      console.log("[Anima] Pose prompt construído, nós:", keys.length);
+      const readNumInput = (classType, inputName, fallback) => {
+        const key = keys.find((k) => prompt[k]?.class_type === classType);
+        const val = key ? prompt[key]?.inputs?.[inputName] : void 0;
         return typeof val === "number" ? val : fallback;
       };
+      let width = 1024;
+      let height = 1024;
+      try {
+        const poseDataRaw = poseStudioNode.inputs?.pose_data;
+        const poseData = typeof poseDataRaw === "string" ? JSON.parse(poseDataRaw) : null;
+        const view = poseData?.export ?? poseData?.view;
+        if (typeof view?.view_width === "number") width = view.view_width;
+        if (typeof view?.view_height === "number") height = view.view_height;
+      } catch {
+      }
       const poseParams = {
         diffusionModel: "krea2",
         prompt: "",
         negativePrompt: "",
         seed,
-        steps: readNumInput("9", "steps", 12),
-        cfg: readNumInput("9", "cfg", 2.5),
-        width: readNumInput("8", "width", 1024),
-        height: readNumInput("8", "height", 1024),
+        steps: readNumInput("KSampler", "steps", 25),
+        cfg: readNumInput("KSampler", "cfg", 1),
+        width,
+        height,
         loras: [],
-        modelName: ""
+        modelName: "qwen-image-2.1"
       };
       const response = await comfyClient.sendPrompt(prompt);
       console.log("[Anima] Pose prompt enviado, ID:", response.prompt_id);
@@ -2608,13 +2649,14 @@ function setupIPC() {
         response.prompt_id,
         (current, max) => {
           mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
-        }
+        },
+        9e5
       );
       console.log(`[Anima] Pose concluída, ${images.length} imagem(ns)`);
       const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams, filenamePrefix);
       return { promptId: response.prompt_id, images: savedImages };
     } finally {
-      removeTempFiles([charFilename, poseFilename], comfyInputDir);
+      removeTempFiles([charFilename], comfyInputDir);
     }
   });
   ipcMain.handle("comfyui:generateOutfit", async (event, rawParams) => {
@@ -2869,6 +2911,17 @@ function setupIPC() {
   });
   ipcMain.handle("app:getVersion", async () => {
     return app.getVersion();
+  });
+  ipcMain.handle("app:getPoseStudioWorkflow", async (event) => {
+    requireMainWindow(event);
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile;
+    if (!poseWorkflowFile) return null;
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile);
+    if (!existsSync(poseWorkflowPath)) {
+      console.warn("[Anima] Workflow de pose não encontrado:", poseWorkflowPath);
+      return null;
+    }
+    return JSON.parse(readFileSync(poseWorkflowPath, "utf-8"));
   });
   ipcMain.handle("file:readImage", async (event, filePath) => {
     requireMainWindow(event);

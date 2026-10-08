@@ -48,6 +48,8 @@ interface ElectronAPI {
     getWorkflowDefaults: (diffusionModel?: string) => Promise<any>
     getModelProfiles: () => Promise<Record<string, import('./types').ModelProfile>>
     getVersion: () => Promise<string>
+    /** Workflow JSON da aba Pose (VNCCS Pose Studio QI2.1) para carregar no webview */
+    getPoseStudioWorkflow: () => Promise<import('./types').WorkflowJSON | null>
   }
   file: {
     loadHistory: () => Promise<SavedHistoryItem[]>

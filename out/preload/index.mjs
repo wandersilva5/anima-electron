@@ -40,7 +40,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   app: {
     getWorkflowDefaults: (diffusionModel) => ipcRenderer.invoke("app:getWorkflowDefaults", diffusionModel),
     getModelProfiles: () => ipcRenderer.invoke("app:getModelProfiles"),
-    getVersion: () => ipcRenderer.invoke("app:getVersion")
+    getVersion: () => ipcRenderer.invoke("app:getVersion"),
+    getPoseStudioWorkflow: () => ipcRenderer.invoke("app:getPoseStudioWorkflow")
   },
   file: {
     loadHistory: () => ipcRenderer.invoke("file:loadHistory"),

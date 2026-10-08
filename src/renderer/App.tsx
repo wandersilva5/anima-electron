@@ -253,9 +253,12 @@ export default function App() {
             <RecreateTab />
           ) : activeTab === 'outfit' ? (
             <OutfitStudio />
-          ) : (
+          ) : null}
+          {/* PoseStudio fica sempre montado: o <webview> do ComfyUI não pode
+              ser recriado a cada troca de aba (a captura 3D vive lá dentro). */}
+          <div className={activeTab === 'pose' ? 'flex-1 flex min-w-0 overflow-hidden' : 'hidden'}>
             <PoseStudio />
-          )}
+          </div>
         </div>
       )}
 

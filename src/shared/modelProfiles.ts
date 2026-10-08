@@ -23,7 +23,7 @@ export const MODEL_PROFILES: Record<DiffusionModelId, ModelProfile> = {
     label: 'Krea2',
     description: 'Krea2 Turbo — geração rápida, sem prompt negativo',
     workflowFile: 'Krea2 - Simples.json',
-    poseWorkflowFile: 'Krea2-Pose.json',
+    poseWorkflowFile: 'VNCCS-PoseStudio-QI21.json',
     outfitWorkflowFile: 'Krea2-Outfit.json',
     loraFolder: 'Krea2',
     hasNegativePrompt: false,
@@ -32,6 +32,26 @@ export const MODEL_PROFILES: Record<DiffusionModelId, ModelProfile> = {
       steps: 8,
       cfg: 1,
       width: 512,
+      height: 1024,
+      sampler: 'euler',
+      scheduler: 'simple'
+    }
+  },
+  'qwen-image': {
+    id: 'qwen-image',
+    label: 'Qwen Image 2.1',
+    description: 'Qwen Image 2.1 — geração e edição nativa de imagem',
+    workflowFile: 'QwenImage-Simples.json',
+    poseWorkflowFile: undefined,
+    outfitWorkflowFile: 'QwenImage-Outfit.json',
+    improveWorkflowFile: 'QwenImage-Improve.json',
+    loraFolder: 'qwen',
+    hasNegativePrompt: false,
+    hasLoraClipStrength: false,
+    defaults: {
+      steps: 25,
+      cfg: 1,
+      width: 1024,
       height: 1024,
       sampler: 'euler',
       scheduler: 'simple'
@@ -56,4 +76,4 @@ export const MODEL_PROFILES: Record<DiffusionModelId, ModelProfile> = {
   }
 }
 
-export const MODEL_IDS: DiffusionModelId[] = ['anima', 'krea2', 'z-image']
+export const MODEL_IDS: DiffusionModelId[] = ['anima', 'krea2', 'qwen-image', 'z-image']

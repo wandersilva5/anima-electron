@@ -1,4 +1,4 @@
-import type { DiffusionModelId, LoraSelection, RegionalLoraSlot } from '@shared/types'
+import type { DiffusionModelId, ImproveEditMode, LoraSelection, RegionalLoraSlot } from '@shared/types'
 
 /**
  * Persistência por aba das últimas configurações usadas.
@@ -22,6 +22,7 @@ interface TabSettings {
   denoise: number
   captionMode?: 'descriptive' | 'tags'
   regional?: RegionalSettings
+  editMode?: ImproveEditMode
 }
 
 export function loadTabSettings(key: string): Partial<TabSettings> {

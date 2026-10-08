@@ -19,7 +19,7 @@ export function RecreateTab() {
   const savedSettings = useRef(loadTabSettings(TAB_KEY)).current
   const [selectedModel, setSelectedModel] = useState<DiffusionModelId>(savedSettings.diffusionModel ?? 'anima')
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(savedSettings.checkpoint ?? '')
-  const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength } = useLoraSelection(savedSettings.loras ?? [])
+  const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength, reorderLoras } = useLoraSelection(savedSettings.loras ?? [])
   const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.65)
   const [regional, setRegional] = useState<RegionalSettings>(
     savedSettings.regional ?? { enabled: false, face: null, breasts: null, body: null }
@@ -163,8 +163,13 @@ export function RecreateTab() {
       const seed = Math.floor(Math.random() * 2147483647)
 
       // LoRAs por região (teste): descarta slots de pastas que já não existem
-      const validSlot = (slot: RegionalLoraSlot | null): RegionalLoraSlot | null =>
-        slot && loras.some(l => l.name === slot.name) ? slot : null
+      // e slots com força zerada (região inativa derrubava o ComfyUI com
+      // "lifecycle owners cannot be empty").
+      const validSlot = (slot: RegionalLoraSlot | null): RegionalLoraSlot | null => {
+        if (!slot || !loras.some(l => l.name === slot.name)) return null
+        if ((slot.strengthModel ?? 0) <= 0 && (slot.strengthClip ?? 0) <= 0) return null
+        return slot
+      }
       const regionalFace = validSlot(regional.face)
       const regionalBreasts = validSlot(regional.breasts)
       const regionalBody = validSlot(regional.body)
@@ -175,7 +180,7 @@ export function RecreateTab() {
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: captionText,
-        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, large breasts, extra-large breasts, huge breasts',
+        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cut, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, extra limbs, farry, amputated, large breasts, extra-large breasts, huge breasts',
         seed,
         steps: prof.defaults.steps,
         cfg: prof.defaults.cfg,
@@ -394,6 +399,7 @@ export function RecreateTab() {
               onToggleLora={toggleLora}
               onClearLoras={clearLoras}
               onLoraStrengthChange={setLoraStrength}
+              onReorderLoras={reorderLoras}
               refreshLorasFn={refreshLoras}
             />
 
@@ -538,7 +544,6 @@ export function RecreateTab() {
                   >
                     {regionalOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     <span>LoRAs por Região</span>
-                    <span className="text-[9px] uppercase tracking-wider text-accent font-semibold normal-case px-1 py-0.5 rounded bg-accent/10">teste</span>
                     {regional.enabled && (
                       <span className="text-[10px] text-accent font-normal normal-case">
                         ({[regional.face ? 'rosto' : null, regional.breasts ? 'seios' : null, regional.body ? 'corpo' : null].filter(Boolean).join(', ') || 'ativo'})
@@ -551,13 +556,12 @@ export function RecreateTab() {
                     aria-checked={regional.enabled}
                     disabled={generating}
                     onClick={() => setRegional(r => ({ ...r, enabled: !r.enabled }))}
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-colors shrink-0 ${
-                      generating
-                        ? 'opacity-40 cursor-not-allowed bg-surface-tertiary text-text-muted border-border'
-                        : regional.enabled
-                          ? 'bg-accent text-white border-accent'
-                          : 'bg-surface-tertiary text-text-muted border-border hover:text-text-primary'
-                    }`}
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-colors shrink-0 ${generating
+                      ? 'opacity-40 cursor-not-allowed bg-surface-tertiary text-text-muted border-border'
+                      : regional.enabled
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-surface-tertiary text-text-muted border-border hover:text-text-primary'
+                      }`}
                   >
                     {regional.enabled ? 'Ativo' : 'Off'}
                   </button>
@@ -819,9 +823,8 @@ function RegionalSlotRow({
                       onChange(null)
                       setOpen(false)
                     }}
-                    className={`w-full text-left px-2 py-1.5 text-[11px] hover:bg-surface-tertiary transition-colors border-b border-border/40 ${
-                      value ? 'text-text-muted' : 'text-accent font-medium'
-                    }`}
+                    className={`w-full text-left px-2 py-1.5 text-[11px] hover:bg-surface-tertiary transition-colors border-b border-border/40 ${value ? 'text-text-muted' : 'text-accent font-medium'
+                      }`}
                   >
                     Nenhum LoRA
                   </button>
@@ -844,9 +847,8 @@ function RegionalSlotRow({
                             onChange({ name: l.name, strengthModel: strength, strengthClip: strength })
                             setOpen(false)
                           }}
-                          className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-tertiary transition-colors ${
-                            isSelected ? 'bg-accent/10' : ''
-                          }`}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-tertiary transition-colors ${isSelected ? 'bg-accent/10' : ''
+                            }`}
                         >
                           <span className="w-8 h-8 shrink-0 rounded overflow-hidden bg-surface-tertiary border border-border flex items-center justify-center">
                             {l.previewUrl ? (
@@ -858,9 +860,8 @@ function RegionalSlotRow({
                             )}
                           </span>
                           <span
-                            className={`flex-1 min-w-0 text-[11px] leading-tight break-all ${
-                              isSelected ? 'text-accent font-medium' : 'text-text-primary'
-                            }`}
+                            className={`flex-1 min-w-0 text-[11px] leading-tight break-all ${isSelected ? 'text-accent font-medium' : 'text-text-primary'
+                              }`}
                           >
                             {name}
                           </span>

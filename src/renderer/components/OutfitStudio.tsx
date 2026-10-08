@@ -187,6 +187,7 @@ export function OutfitStudio() {
   // mas mantemos para consistência visual
   const [selectedCheckpoint] = useState('')
   const selectedLoras: import('@shared/types').LoraSelection[] = []
+  const diffusionModel: import('@shared/types').DiffusionModelId = 'qwen-image'
 
   const charInputRef = useRef<HTMLInputElement>(null)
   const outfitInputRef = useRef<HTMLInputElement>(null)
@@ -398,7 +399,7 @@ export function OutfitStudio() {
           <div className="w-full p-3 rounded-lg bg-accent/5 border border-accent/20 text-xs text-text-secondary flex items-start gap-2">
             <span className="text-accent shrink-0 mt-0.5">ℹ</span>
             <span>
-              O modelo <strong className="text-text-primary">Krea2</strong> mantém a identidade e a pose da personagem da primeira imagem e transfere apenas a roupa da segunda — sem necessidade de máscaras ou ControlNet.
+              O modelo <strong className="text-text-primary">Qwen Image 2.1</strong> mantém a identidade e a pose da personagem da primeira imagem e transfere apenas a roupa da segunda — sem necessidade de máscaras ou ControlNet.
             </span>
           </div>
         </div>
@@ -407,20 +408,23 @@ export function OutfitStudio() {
       <aside className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-border bg-surface-secondary overflow-y-auto shrink-0 max-h-[40vh] lg:max-h-none">
         <div className="flex flex-col h-full">
           <div className="p-4 space-y-4 overflow-y-auto">
-            <ModelSidebar
-              diffusionModel="krea2"
-              onDiffusionModelChange={() => {}}
-              hideDiffusionSelector
-              modelName={selectedCheckpoint}
-              onModelChange={() => {}}
-              models={models}
-              loras={loras}
-              selectedLoras={selectedLoras}
-              onToggleLora={() => {}}
-              onClearLoras={() => {}}
-              onLoraStrengthChange={() => {}}
-              refreshLorasFn={refreshLoras}
-            />
+<ModelSidebar
+      diffusionModel={diffusionModel}
+      onDiffusionModelChange={(id: any) => {
+        console.log('Diffusion model change requested:', id)
+        // Do not allow changing diffusion model in outfit studio
+      }}
+      hideDiffusionSelector
+      modelName={selectedCheckpoint}
+      onModelChange={() => {}}
+      models={models}
+      loras={loras}
+      selectedLoras={selectedLoras}
+      onToggleLora={() => {}}
+      onClearLoras={() => {}}
+      onLoraStrengthChange={() => {}}
+      refreshLorasFn={refreshLoras}
+    />
 
             <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
               <p className="font-medium text-text-secondary">Como funciona:</p>

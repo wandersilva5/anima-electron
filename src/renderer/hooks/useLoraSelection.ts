@@ -24,5 +24,16 @@ export function useLoraSelection(initial: LoraSelection[] = []) {
     )
   }, [])
 
-  return { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength }
+  /** Reordena a lista (ordem da lista = ordem de aplicação no workflow) */
+  const reorderLoras = useCallback((from: number, to: number) => {
+    setSelectedLoras((prev) => {
+      if (from === to || from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }, [])
+
+  return { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength, reorderLoras }
 }

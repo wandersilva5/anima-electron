@@ -14,6 +14,8 @@ interface GenerationParamsState extends GenerationParams {
   toggleLora: (name: string) => void
   clearLoras: () => void
   setLoraStrength: (name: string, kind: 'model' | 'clip', v: number) => void
+  /** Reordena a lista de LoRAs (ordem da lista = ordem de aplicação no workflow) */
+  reorderLora: (from: number, to: number) => void
   setModel: (name: string) => void
   setDiffusionModel: (id: DiffusionModelId) => void
   randomizeSeed: () => void
@@ -228,6 +230,16 @@ export const useSessionStore = create<SessionState>((set) => ({
             ? (kind === 'model' ? { ...l, strengthModel: value } : { ...l, strengthClip: value })
             : l
         )
+        saveLoras(s.params.diffusionModel, next)
+        return { params: { ...s.params, loras: next } }
+      }),
+    reorderLora: (from, to) =>
+      set((s) => {
+        const list = s.params.loras
+        if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return {}
+        const next = [...list]
+        const [moved] = next.splice(from, 1)
+        next.splice(to, 0, moved)
         saveLoras(s.params.diffusionModel, next)
         return { params: { ...s.params, loras: next } }
       }),

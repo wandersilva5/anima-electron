@@ -68,59 +68,65 @@ export class WorkflowManager {
       this.patchGGUFPlugin()
     }
     for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
-      try {
-        const filePath = join(workflowsDir, profile.workflowFile)
-        const raw = readFileSync(filePath, 'utf-8')
-        const workflow: WorkflowJSON = JSON.parse(raw)
-
-        let positiveNodeId: number | null = null
-        let negativeNodeId: number | null = null
-        let vaeNodeId: number | null = null
-        let ksamplerNodeId: number | null = null
-        let emptyLatentNodeId: number | null = null
-
-        const ksampler = workflow.nodes.find(n => n.type === 'KSampler')
-        if (ksampler) {
-          ksamplerNodeId = ksampler.id
-          const posNode = findOriginNode(workflow, ksampler.id, 'positive')
-          if (posNode && posNode.type === 'CLIPTextEncode') {
-            positiveNodeId = posNode.id
-          }
-          const negNode = findOriginNode(workflow, ksampler.id, 'negative')
-          if (negNode && negNode.type === 'CLIPTextEncode') {
-            negativeNodeId = negNode.id
-          }
-        }
-
-        const vaeDecode = workflow.nodes.find(n => n.type === 'VAEDecode')
-        if (vaeDecode) {
-          const vaeSrc = findOriginNode(workflow, vaeDecode.id, 'vae')
-          if (vaeSrc) {
-            vaeNodeId = vaeSrc.id
-          }
-        }
-
-        const emptyLatent = workflow.nodes.find(
-          n => n.type === 'EmptyLatentImage' || n.type === 'EmptySD3LatentImage'
-        )
-        if (emptyLatent) {
-          emptyLatentNodeId = emptyLatent.id
-        }
-
-        const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId)
-
-        this.workflows[modelId] = {
-          workflow,
-          positiveNodeId,
-          negativeNodeId,
-          vaeNodeId,
-          ksamplerNodeId,
-          emptyLatentNodeId,
-          defaults
-        }
-      } catch (err) {
-        console.error(`[WorkflowManager] Erro ao carregar workflow para ${modelId}:`, err)
+      this.loadWorkflowInto(modelId, join(workflowsDir, profile.workflowFile))
+      if (profile.improveWorkflowFile) {
+        this.loadWorkflowInto(`${modelId}:improve`, join(workflowsDir, profile.improveWorkflowFile))
       }
+    }
+  }
+
+  private loadWorkflowInto(key: string, filePath: string): void {
+    try {
+      const raw = readFileSync(filePath, 'utf-8')
+      const workflow: WorkflowJSON = JSON.parse(raw)
+
+      let positiveNodeId: number | null = null
+      let negativeNodeId: number | null = null
+      let vaeNodeId: number | null = null
+      let ksamplerNodeId: number | null = null
+      let emptyLatentNodeId: number | null = null
+
+      const ksampler = workflow.nodes.find(n => n.type === 'KSampler')
+      if (ksampler) {
+        ksamplerNodeId = ksampler.id
+        const posNode = findOriginNode(workflow, ksampler.id, 'positive')
+        if (posNode && (posNode.type === 'CLIPTextEncode' || posNode.type === 'TextEncodeQwenImage21')) {
+          positiveNodeId = posNode.id
+        }
+        const negNode = findOriginNode(workflow, ksampler.id, 'negative')
+        if (negNode && (negNode.type === 'CLIPTextEncode' || negNode.type === 'TextEncodeQwenImage21')) {
+          negativeNodeId = negNode.id
+        }
+      }
+
+      const vaeDecode = workflow.nodes.find(n => n.type === 'VAEDecode')
+      if (vaeDecode) {
+        const vaeSrc = findOriginNode(workflow, vaeDecode.id, 'vae')
+        if (vaeSrc) {
+          vaeNodeId = vaeSrc.id
+        }
+      }
+
+      const emptyLatent = workflow.nodes.find(
+        n => n.type === 'EmptyLatentImage' || n.type === 'EmptySD3LatentImage'
+      )
+      if (emptyLatent) {
+        emptyLatentNodeId = emptyLatent.id
+      }
+
+      const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId)
+
+      this.workflows[key] = {
+        workflow,
+        positiveNodeId,
+        negativeNodeId,
+        vaeNodeId,
+        ksamplerNodeId,
+        emptyLatentNodeId,
+        defaults
+      }
+    } catch (err) {
+      console.error(`[WorkflowManager] Erro ao carregar workflow ${key} (${filePath}):`, err)
     }
   }
 
@@ -218,7 +224,11 @@ export class WorkflowManager {
       scheduler: (ksampler?.widgets_values?.[5] as string) ?? 'simple',
       denoise: (ksampler?.widgets_values?.[6] as number) ?? 1,
       positivePrompt: (positiveEncode?.widgets_values?.[0] as string) ?? '',
-      negativePrompt: (negativeEncode?.widgets_values?.[0] as string) ?? '',
+      // TextEncodeQwenImage21 guarda [prompt, negative_prompt, resolution];
+      // CLIPTextEncode guarda apenas [text].
+      negativePrompt: negativeEncode?.type === 'TextEncodeQwenImage21'
+        ? (negativeEncode.widgets_values?.[1] as string) ?? ''
+        : (negativeEncode?.widgets_values?.[0] as string) ?? '',
       loraName: (loraLoader?.widgets_values?.[0] as string) ?? 'None',
       loraStrengthModel: (loraLoader?.widgets_values?.[1] as number) ?? 0.5,
       loraStrengthClip: (loraLoader?.type === 'LoraLoader' ? (loraLoader.widgets_values?.[2] as number) : 0.5),
@@ -256,7 +266,10 @@ export class WorkflowManager {
     opts: { availableNodes?: Set<string>; warnings?: string[] } = {}
   ): Record<string, unknown> {
     const modelId = params.diffusionModel || 'anima'
-    const data = this.workflows[modelId]
+    // Chamadas da aba Melhoria (com editMode) usam o workflow improve dedicado
+    // do modelo, quando existir; os demais fluxos seguem o workflow base.
+    const improveKey = `${modelId}:improve`
+    const data = (params.editMode && this.workflows[improveKey]) || this.workflows[modelId]
     const warnings = opts.warnings ?? []
     if (!data) {
       throw new Error(`Workflow not loaded for model: ${modelId}`)
@@ -311,6 +324,14 @@ export class WorkflowManager {
             if (params.negativePrompt) {
               widgetValues[0] = params.negativePrompt
             }
+          }
+          break
+        }
+        case 'TextEncodeQwenImage21': {
+          // widgets_values = [prompt, negative_prompt, resolution]
+          widgetValues[0] = params.prompt
+          if (params.negativePrompt) {
+            widgetValues[1] = params.negativePrompt
           }
           break
         }
@@ -389,7 +410,13 @@ export class WorkflowManager {
               inputs[input.name] = [String(fromNodeId), fromSlot as number]
             }
           } else {
-            if (widgetIndex < widgetValues.length) {
+            // Inputs sem link só recebem valor de widget quando realmente são
+            // widgets (possuem descritor `widget`) ou não são sockets ocultos.
+            // Slots opcionais/growables (shape 7) sem widget — ex.: slots de
+            // imagem extras do TextEncodeQwenImage21 — ficam de fora para não
+            // deslocar a leitura posicional de widgets_values.
+            const isHiddenOptionalSocket = input.shape === 7 && !('widget' in input && input.widget)
+            if (!isHiddenOptionalSocket && widgetIndex < widgetValues.length) {
               inputs[input.name] = widgetValues[widgetIndex]
               widgetIndex++
             }
@@ -398,6 +425,19 @@ export class WorkflowManager {
       }
 
       nodeEntry.inputs = inputs
+
+      // Widget de upload do LoadImage não existe na API do ComfyUI
+      delete inputs['upload']
+
+      // Checkpoints .gguf exigem o loader do plugin ComfyUI-GGUF
+      if (node.type === 'UNETLoader' && typeof inputs.unet_name === 'string' && inputs.unet_name.toLowerCase().endsWith('.gguf')) {
+        console.log(`[WorkflowManager] Swapping UNETLoader node ${node.id} (${inputs.unet_name}) to UnetLoaderGGUFAdvanced`)
+        nodeEntry.class_type = 'UnetLoaderGGUFAdvanced'
+        delete inputs.weight_dtype
+        inputs.dequant_dtype = 'default'
+        inputs.patch_dtype = 'default'
+        inputs.patch_on_device = false
+      }
 
       // UnetLoaderGGUF outputs WANVIDEOMODEL in ComfyUI 0.26+, incompatible
       // with standard nodes. Swap to UnetLoaderGGUFAdvanced which outputs MODEL.
@@ -588,7 +628,46 @@ export class WorkflowManager {
       }
     }
 
-    if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
+    // TextEncodeQwenImage21 (aba Melhoria): aponta os LoadImages do workflow
+    // para a imagem de origem (image_1 = <image1>) e para a referência opcional
+    // (image_2 = <image2>). Sem referência, o slot image_2 é removido.
+    const teQwenNode = nodes.find(n => n.type === 'TextEncodeQwenImage21')
+    if (teQwenNode) {
+      const teEntry = prompt[String(teQwenNode.id)] as { inputs: Record<string, unknown> } | undefined
+      const originOf = (inputName: string): number | null => {
+        const input = teQwenNode.inputs?.find(i => i.name === inputName)
+        if (!input || input.link === null || input.link === undefined) return null
+        const link = data.workflow.links?.find(l => l && l[0] === input.link)
+        return link ? link[1] : null
+      }
+      if (teEntry && params.imagePath) {
+        const srcId = originOf('images.image_1')
+        if (srcId !== null) {
+          const srcEntry = prompt[String(srcId)] as { inputs: Record<string, unknown> } | undefined
+          if (srcEntry) srcEntry.inputs.image = params.imagePath
+        }
+      }
+      if (teEntry) {
+        const refId = originOf('images.image_2')
+        if (refId !== null) {
+          if (params.refImagePath) {
+            const refEntry = prompt[String(refId)] as { inputs: Record<string, unknown> } | undefined
+            if (refEntry) refEntry.inputs.image = params.refImagePath
+          } else {
+            delete teEntry.inputs['images.image_2']
+            delete prompt[String(refId)]
+          }
+        }
+      }
+    }
+
+    // Edição nativa do Qwen Image 2.1: o KSampler amostra no latent vazio do
+    // próprio TextEncodeQwenImage21 (dimensionado pela imagem de origem), então
+    // o injetor img2img (VAEEncode) fique de fora. Refine/inpaint usam o
+    // injetor clássico (com máscara, quando presente).
+    const useNativeEditLatent = params.editMode === 'edit'
+
+    if (isImg2Img && !useNativeEditLatent && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
       const loadImageId = 99990
       const vaeEncodeId = 99991
 
@@ -693,6 +772,18 @@ export class WorkflowManager {
       console.warn(`[WorkflowManager] Regional ignorado: ${message}`)
     }
 
+    // Slots com força zerada não ativam nenhuma região no Attention Coupling
+    // e derrubavam a geração com "lifecycle owners cannot be empty".
+    const activeSlots = slots.filter(
+      (s) => (s.slot.strengthModel ?? 0) > 0 || (s.slot.strengthClip ?? 0) > 0
+    )
+    if (activeSlots.length === 0) {
+      skip('LoRAs por região com força zerada; geração segue sem regional.')
+      return
+    }
+    slots.length = 0
+    slots.push(...activeSlots)
+
     if (params.diffusionModel !== 'anima') {
       skip('LoRAs por região disponíveis apenas no modelo anima. Geração segue sem regional.')
       return
@@ -795,7 +886,7 @@ export class WorkflowManager {
     const detectInputs = (detectorRef: [string, number]): Record<string, unknown> => ({
       image: ['99990', 0],
       detector_model: detectorRef,
-      confidence_threshold: 0.5,
+      confidence_threshold: 0.35,
       size_threshold: 10,
       keep_only: 0,
       keep_by: 'highest confidence',
@@ -853,14 +944,17 @@ export class WorkflowManager {
     if (maskRefs.length === 1) {
       regionMasksRef = maskRefs[0]
     } else {
+      // MaskBatchMulti usa inputcount + mask_1..mask_N; montar genericamente
+      // para suportar 2 ou 3 regiões (antes só ligava mask_1/mask_2 e a
+      // terceira região era silenciosamente ignorada).
+      const batchInputs: Record<string, unknown> = { inputcount: maskRefs.length }
+      maskRefs.forEach((ref, i) => {
+        batchInputs[`mask_${i + 1}`] = ref
+      })
       prompt['86014'] = {
         class_type: 'MaskBatchMulti',
         _meta: { title: 'Batch de máscaras regionais' },
-        inputs: {
-          inputcount: maskRefs.length,
-          mask_1: maskRefs[0],
-          mask_2: maskRefs[1]
-        }
+        inputs: batchInputs
       }
       regionMasksRef = ['86014', 0]
     }
@@ -888,22 +982,6 @@ export class WorkflowManager {
   }
 
   /**
-   * Constrói o prompt da API do ComfyUI para o workflow Krea2-Pose.
-   * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
-   *   image1 = personagem (identidade) → nó LoadImage id 4
-   *   image2 = referência de pose      → nó LoadImage id 5
-   * Não usa DWPose nem ControlNet.
-   */
-  buildPosePrompt(
-    charFilename: string,
-    poseFilename: string,
-    seed: number,
-    poseWorkflowPath: string
-  ): Record<string, unknown> {
-    return this.buildTwoImagePrompt(poseWorkflowPath, charFilename, poseFilename, seed)
-  }
-
-  /**
    * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
    * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
    *   image1 = personagem (identidade)   → nó LoadImage id 4
@@ -920,7 +998,7 @@ export class WorkflowManager {
   }
 
   /**
-   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Pose/Krea2-Outfit).
+   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Outfit).
    * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
    */
   private buildTwoImagePrompt(

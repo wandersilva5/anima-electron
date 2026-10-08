@@ -9,6 +9,8 @@ export function useFilterModels(models: ModelInfo[], diffusionModel: DiffusionMo
         return name.includes('anima')
       } else if (diffusionModel === 'krea2') {
         return name.includes('krea') || name.includes('krea2') || name === 'krea2_turbo_fp8_scaled.safetensors'
+      } else if (diffusionModel === 'qwen-image') {
+        return name.includes('qwen')
       } else if (diffusionModel === 'z-image') {
         return name.includes('z-image') || name.includes('z_image')
       }

@@ -38,6 +38,7 @@ export function PromptPanel() {
           onToggleLora={params.toggleLora}
           onClearLoras={params.clearLoras}
           onLoraStrengthChange={params.setLoraStrength}
+          onReorderLoras={params.reorderLora}
           refreshLorasFn={refreshLoras}
         />
 

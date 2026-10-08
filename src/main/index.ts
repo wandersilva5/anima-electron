@@ -324,7 +324,9 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
       return out
     })(),
     denoise: p.denoise !== undefined ? num(p.denoise, 1, 0.05, 1) : undefined,
+    editMode: p.editMode === 'edit' || p.editMode === 'refine' || p.editMode === 'inpaint' ? p.editMode : undefined,
     imageBase64: typeof p.imageBase64 === 'string' ? p.imageBase64 : undefined,
+    refImageBase64: typeof p.refImageBase64 === 'string' ? p.refImageBase64 : undefined,
     maskBase64: typeof p.maskBase64 === 'string' ? p.maskBase64 : undefined,
     poseImageBase64: typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : undefined,
     poseData: typeof p.poseData === 'string' ? p.poseData : undefined,
@@ -339,16 +341,19 @@ function sanitizeGenerationParams(raw: unknown): Record<string, unknown> {
         const s = v as Record<string, unknown>
         const name = strOrNull(s.name)
         if (!name || name.length > 300) return null
-        return {
-          name,
-          strengthModel: num(s.strengthModel, 0.8, 0, 2),
-          strengthClip: num(s.strengthClip, 0.8, 0, 2)
-        }
+        const strengthModel = num(s.strengthModel, 0.8, 0, 2)
+        const strengthClip = num(s.strengthClip, 0.8, 0, 2)
+        // Força zerada = região inativa no Attention Coupling (dava
+        // "lifecycle owners cannot be empty"). Descarta o slot aqui para
+        // que a geração caia no fluxo normal em vez de falhar.
+        if (strengthModel <= 0 && strengthClip <= 0) return null
+        return { name, strengthModel, strengthClip }
       }
       const face = slot(r.face)
       const breasts = slot(r.breasts)
-      if (!face && !breasts) return undefined
-      return { face, breasts }
+      const body = slot(r.body)
+      if (!face && !breasts && !body) return undefined
+      return { face, breasts, body }
     })()
   }
 }
@@ -405,7 +410,10 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // O editor VNCCS Pose Studio (3D pose + captura) só existe na UI do
+      // ComfyUI; a aba Pose embute essa UI em <webview>.
+      webviewTag: true
     },
     show: false,
     backgroundColor: '#0f0f13',
@@ -480,9 +488,9 @@ function setupIPC(): void {
 
   ipcMain.handle('comfyui:generateImprove', async (event, rawParams) => {
     requireMainWindow(event)
-    const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams & { imageBase64?: string; maskBase64?: string; poseImageBase64?: string }
+    const params = sanitizeGenerationParams(rawParams) as unknown as GenerationParams & { imageBase64?: string; refImageBase64?: string; maskBase64?: string; poseImageBase64?: string }
     console.log('[Anima] Iniciando melhoria de imagem (img2img)...')
-    console.log('[Anima] Modelo:', params.diffusionModel, '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
+    console.log('[Anima] Modelo:', params.diffusionModel, '| Modo:', params.editMode ?? 'img2img', '| Prompt:', (params.prompt ?? '').slice(0, 80) + '...')
 
     if (!params.imageBase64) {
       throw new Error('Imagem não fornecida')
@@ -497,6 +505,16 @@ function setupIPC(): void {
     const imgExt = imageMatch ? imageMatch[1] : 'png'
     const inputFilename = `anima-improve-${Date.now()}.${imgExt === 'jpeg' ? 'jpg' : imgExt}`
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl)
+
+    // Upload optional reference image (slot <image2> do TextEncodeQwenImage21)
+    let refImageFilename: string | undefined
+    if (params.refImageBase64) {
+      const refMatch = params.refImageBase64.match(/^data:image\/(\w+);base64,/)
+      const refExt = refMatch ? refMatch[1] : 'png'
+      refImageFilename = `anima-improve-ref-${Date.now()}.${refExt === 'jpeg' ? 'jpg' : refExt}`
+      await uploadImageToComfyUI(params.refImageBase64, refImageFilename, comfyInputDir, baseUrl)
+      console.log('[Anima] Imagem de referência enviada para ComfyUI:', refImageFilename)
+    }
 
     // Upload rendered pose image (single-pose OpenPose canvas) for the LLLite
     let poseImageFilename: string | undefined
@@ -516,6 +534,7 @@ function setupIPC(): void {
     const improveParams = {
       ...params,
       imagePath: inputFilename,
+      refImagePath: refImageFilename,
       filenamePrefix: params.filenamePrefix || 'anima-improve',
       maskFilename,
       poseImageFilename
@@ -524,27 +543,48 @@ function setupIPC(): void {
     try {
       const availableNodes = await comfyClient.getAvailableNodes()
       const warnings: string[] = []
-      const prompt = workflowManager.buildPrompt(improveParams, { availableNodes, warnings })
-      console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
-      const response = await comfyClient.sendPrompt(prompt)
-      console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
-      if (Object.keys(response.node_errors ?? {}).length > 0) {
-        console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
-        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+      const onProgress = (promptId: string) => (current: number, max: number) => {
+        mainWindow?.webContents.send('comfyui:progress', { current, max, promptId })
       }
-      const images = await comfyClient.waitForResult(
-        response.prompt_id,
-        (current, max) => {
-          mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+      const runOnce = async (p: typeof improveParams): Promise<{ promptId: string; images: Awaited<ReturnType<typeof comfyClient.waitForResult>> }> => {
+        const prompt = workflowManager.buildPrompt(p, { availableNodes, warnings })
+        console.log('[Anima] Prompt img2img construído, nós:', Object.keys(prompt).length)
+        const response = await comfyClient.sendPrompt(prompt)
+        console.log('[Anima] Prompt enviado, ID:', response.prompt_id)
+        if (Object.keys(response.node_errors ?? {}).length > 0) {
+          console.error('[Anima] Erros nos nós:', JSON.stringify(response.node_errors))
+          throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
         }
-      )
-      console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
-
-      const savedImages = saveImagesToHistory(response.prompt_id, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
-      return { promptId: response.prompt_id, images: savedImages, warning: warnings.join(' ') || undefined }
+        const images = await comfyClient.waitForResult(response.prompt_id, onProgress(response.prompt_id))
+        return { promptId: response.prompt_id, images }
+      }
+      try {
+        const { promptId, images } = await runOnce(improveParams)
+        console.log(`[Anima] Melhoria concluída, ${images.length} imagem(ns)`)
+        const savedImages = saveImagesToHistory(promptId, images, improveParams as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
+        return { promptId, images: savedImages, warning: warnings.join(' ') || undefined }
+      } catch (err) {
+        // Detecção regional não achou rosto/seios/corpo nesta imagem
+        // ("lifecycle owners cannot be empty"): em vez de falhar, gera sem
+        // regional — era o comportamento de antes do teste de LoRAs por região.
+        const msg = err instanceof Error ? err.message : String(err)
+        const emptyDetection =
+          msg.includes('lifecycle owners cannot be empty') ||
+          msg.includes('composition cannot be empty')
+        if (improveParams.regional && emptyDetection) {
+          console.warn('[Anima] Regional sem máscara válida, repetindo sem regional:', msg.slice(0, 200))
+          warnings.push('LoRAs por região desativados nesta imagem (detecção não encontrou a região); gerada sem regional.')
+          const fallback = { ...improveParams, regional: undefined }
+          const { promptId, images } = await runOnce(fallback)
+          console.log(`[Anima] Melhoria concluída sem regional, ${images.length} imagem(ns)`)
+          const savedImages = saveImagesToHistory(promptId, images, fallback as unknown as Record<string, unknown>, params.filenamePrefix || 'anima-improve')
+          return { promptId, images: savedImages, warning: warnings.join(' ') || undefined }
+        }
+        throw err
+      }
     } finally {
       // Remove arquivos temporários enviados ao ComfyUI para não acumular em input/
-      removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir)
+      removeTempFiles([inputFilename, refImageFilename, poseImageFilename, maskFilename], comfyInputDir)
     }
   })
 
@@ -553,21 +593,15 @@ function setupIPC(): void {
 
     const p = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>
     const charImageBase64 = typeof p.charImageBase64 === 'string' ? p.charImageBase64 : null
-    const poseImageBase64 = typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : null
+    const promptApi = p.promptApi && typeof p.promptApi === 'object' && !Array.isArray(p.promptApi)
+      ? (p.promptApi as Record<string, { class_type?: string; inputs?: Record<string, unknown> }>)
+      : null
     const seed = typeof p.seed === 'number' ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647)
     const filenamePrefix = typeof p.filenamePrefix === 'string' ? p.filenamePrefix : 'anima-pose'
 
     if (!charImageBase64) throw new Error('Imagem da personagem não fornecida')
-    if (!poseImageBase64) throw new Error('Imagem de pose não fornecida')
-
-    // Resolve o caminho do workflow de pose via profile (mesma resolução do WorkflowManager)
-    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile
-    if (!poseWorkflowFile) {
-      throw new Error('Perfil krea2 não define poseWorkflowFile')
-    }
-    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile)
-    if (!existsSync(poseWorkflowPath)) {
-      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`)
+    if (!promptApi || Object.keys(promptApi).length === 0) {
+      throw new Error('Pose não configurada — ajuste a pose no editor VNCCS Pose Studio antes de gerar')
     }
 
     const settings = settingsManager.get()
@@ -578,35 +612,76 @@ function setupIPC(): void {
     const charExt = charMatch ? (charMatch[1] === 'jpeg' ? 'jpg' : charMatch[1]) : 'png'
     const charFilename = `anima-pose-char-${Date.now()}.${charExt}`
 
-    const poseMatch = poseImageBase64.match(/^data:image\/(\w+);base64,/)
-    const poseExt = poseMatch ? (poseMatch[1] === 'jpeg' ? 'jpg' : poseMatch[1]) : 'png'
-    const poseFilename = `anima-pose-ref-${Date.now()}.${poseExt}`
-
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl)
-    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl)
-    console.log('[Anima] Pose: personagem=%s, referência=%s', charFilename, poseFilename)
+    console.log('[Anima] Pose Studio: personagem=%s', charFilename)
 
     try {
-      const prompt = workflowManager.buildPosePrompt(charFilename, poseFilename, seed, poseWorkflowPath)
-      console.log('[Anima] Pose prompt construído, nós:', Object.keys(prompt).length)
+      // O prompt vem serializado pelo frontend embarcado (app.graphToPrompt);
+      // o app só sobrescreve o que ele controla: imagem da personagem, seed
+      // e prefixo do arquivo salvo.
+      const prompt = promptApi
+      const keys = Object.keys(prompt)
+      let poseStudioNode: { inputs?: Record<string, unknown> } | null = null
 
-      // Extrai steps/cfg/dimensões reais do workflow para o histórico
-      const readNumInput = (nodeId: string, inputName: string, fallback: number): number => {
-        const node = prompt[nodeId] as { inputs?: Record<string, unknown> } | undefined
-        const val = node?.inputs?.[inputName]
+      const imageKeys = keys.filter((k) => prompt[k]?.class_type === 'LoadImage')
+      const imageKey = imageKeys.includes('470')
+        ? '470'
+        : imageKeys.length === 1
+          ? imageKeys[0]
+          : null
+      if (!imageKey) {
+        throw new Error(imageKeys.length === 0
+          ? 'Workflow de pose inválido: nó LoadImage não encontrado'
+          : 'Workflow de pose inválido: múltiplos nós LoadImage — use o workflow da aba Pose')
+      }
+
+      for (const key of keys) {
+        const node = prompt[key]
+        if (!node?.inputs) continue
+        if (key === imageKey) {
+          node.inputs.image = charFilename
+          delete node.inputs.upload
+        } else if (node.class_type === 'KSampler') {
+          node.inputs.seed = seed
+        } else if (node.class_type === 'SaveImage') {
+          node.inputs.filename_prefix = filenamePrefix
+        } else if (node.class_type === 'VNCCS_PoseStudio') {
+          poseStudioNode = node
+        }
+      }
+      if (!poseStudioNode) throw new Error('Workflow de pose inválido: nó VNCCS_PoseStudio não encontrado')
+      console.log('[Anima] Pose prompt construído, nós:', keys.length)
+
+      const readNumInput = (classType: string, inputName: string, fallback: number): number => {
+        const key = keys.find((k) => prompt[k]?.class_type === classType)
+        const val = key ? prompt[key]?.inputs?.[inputName] : undefined
         return typeof val === 'number' ? val : fallback
       }
+
+      // Dimensões reais exportadas pelo editor (view_width/view_height)
+      let width = 1024
+      let height = 1024
+      try {
+        const poseDataRaw = poseStudioNode.inputs?.pose_data
+        const poseData = typeof poseDataRaw === 'string' ? JSON.parse(poseDataRaw) : null
+        const view = poseData?.export ?? poseData?.view
+        if (typeof view?.view_width === 'number') width = view.view_width
+        if (typeof view?.view_height === 'number') height = view.view_height
+      } catch {
+        // pose_data ausente/inválido — mantém 1024×1024 no histórico
+      }
+
       const poseParams = {
         diffusionModel: 'krea2' as DiffusionModelId,
         prompt: '',
         negativePrompt: '',
         seed,
-        steps: readNumInput('9', 'steps', 12),
-        cfg: readNumInput('9', 'cfg', 2.5),
-        width: readNumInput('8', 'width', 1024),
-        height: readNumInput('8', 'height', 1024),
+        steps: readNumInput('KSampler', 'steps', 25),
+        cfg: readNumInput('KSampler', 'cfg', 1),
+        width,
+        height,
         loras: [],
-        modelName: ''
+        modelName: 'qwen-image-2.1'
       }
 
       const response = await comfyClient.sendPrompt(prompt)
@@ -615,18 +690,20 @@ function setupIPC(): void {
         throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
       }
 
+      // Qwen-Image 2.1 + captura de pose é bem mais lento que o fluxo antigo
       const images = await comfyClient.waitForResult(
         response.prompt_id,
         (current, max) => {
           mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
-        }
+        },
+        900000
       )
       console.log(`[Anima] Pose concluída, ${images.length} imagem(ns)`)
 
       const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams as unknown as Record<string, unknown>, filenamePrefix)
       return { promptId: response.prompt_id, images: savedImages }
     } finally {
-      removeTempFiles([charFilename, poseFilename], comfyInputDir)
+      removeTempFiles([charFilename], comfyInputDir)
     }
   })
 
@@ -643,9 +720,9 @@ function setupIPC(): void {
     if (!outfitImageBase64) throw new Error('Imagem de roupa não fornecida')
 
     // Resolve o caminho do workflow de roupa via profile (mesma resolução do WorkflowManager)
-    const outfitWorkflowFile = MODEL_PROFILES.krea2.outfitWorkflowFile
+    const outfitWorkflowFile = MODEL_PROFILES['qwen-image'].outfitWorkflowFile
     if (!outfitWorkflowFile) {
-      throw new Error('Perfil krea2 não define outfitWorkflowFile')
+      throw new Error('Perfil qwen-image não define outfitWorkflowFile')
     }
     const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile)
     if (!existsSync(outfitWorkflowPath)) {
@@ -679,7 +756,7 @@ function setupIPC(): void {
         return typeof val === 'number' ? val : fallback
       }
       const outfitParams = {
-        diffusionModel: 'krea2' as DiffusionModelId,
+        diffusionModel: 'qwen-image' as DiffusionModelId,
         prompt: '',
         negativePrompt: '',
         seed,
@@ -927,6 +1004,18 @@ function setupIPC(): void {
 
   ipcMain.handle('app:getVersion', async () => {
     return app.getVersion()
+  })
+
+  ipcMain.handle('app:getPoseStudioWorkflow', async (event) => {
+    requireMainWindow(event)
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile
+    if (!poseWorkflowFile) return null
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile)
+    if (!existsSync(poseWorkflowPath)) {
+      console.warn('[Anima] Workflow de pose não encontrado:', poseWorkflowPath)
+      return null
+    }
+    return JSON.parse(readFileSync(poseWorkflowPath, 'utf-8'))
   })
 
   ipcMain.handle('file:readImage', async (event, filePath: string) => {
