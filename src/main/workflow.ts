@@ -643,8 +643,17 @@ export class WorkflowManager {
       if (teEntry && params.imagePath) {
         const srcId = originOf('images.image_1')
         if (srcId !== null) {
-          const srcEntry = prompt[String(srcId)] as { inputs: Record<string, unknown> } | undefined
-          if (srcEntry) srcEntry.inputs.image = params.imagePath
+          if (params.editMode === 'inpaint') {
+            // Inpaint com condicionante só de texto: com <image1> presente a
+            // reconstrução da imagem original domina a região mascarada (cfg 1)
+            // e a instrução do prompt não surte efeito — a área saía igual.
+            // Sem imagens o TE gera texto puro (nó tolera images vazio).
+            delete teEntry.inputs['images.image_1']
+            delete prompt[String(srcId)]
+          } else {
+            const srcEntry = prompt[String(srcId)] as { inputs: Record<string, unknown> } | undefined
+            if (srcEntry) srcEntry.inputs.image = params.imagePath
+          }
         }
       }
       if (teEntry) {
@@ -694,6 +703,7 @@ export class WorkflowManager {
         // Inpainting mode: add SetLatentNoiseMask + LoadImage for mask
         const setMaskId = 99992
         const loadMaskId = 99993
+        const imageToMaskId = 99994
 
         prompt[String(loadMaskId)] = {
           class_type: 'LoadImage',
@@ -703,12 +713,26 @@ export class WorkflowManager {
           }
         }
 
+        // LoadImage slot 1 (MASK) devolve 1 - alpha (nossa máscara PNG tem
+        // alpha 255 em todo lado → daria 0 e congelaria a imagem), e a API
+        // rejeita ligar IMAGE direto em MASK ("Return type mismatch").
+        // Converte o canal vermelho da máscara binária (pintado = branco)
+        // para MASK com o nó core ImageToMask.
+        prompt[String(imageToMaskId)] = {
+          class_type: 'ImageToMask',
+          _meta: { title: 'ImageToMask (mask)' },
+          inputs: {
+            image: [String(loadMaskId), 0],
+            channel: 'red'
+          }
+        }
+
         prompt[String(setMaskId)] = {
           class_type: 'SetLatentNoiseMask',
           _meta: { title: 'SetLatentNoiseMask (inpaint)' },
           inputs: {
             samples: [String(vaeEncodeId), 0],
-            mask: [String(loadMaskId), 1]
+            mask: [String(imageToMaskId), 0]
           }
         }
 

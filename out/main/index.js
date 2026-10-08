@@ -1061,6 +1061,26 @@ const MODEL_PROFILES = {
       scheduler: "simple"
     }
   },
+  "qwen-image": {
+    id: "qwen-image",
+    label: "Qwen Image 2.1",
+    description: "Qwen Image 2.1 — geração e edição nativa de imagem",
+    workflowFile: "QwenImage-Simples.json",
+    poseWorkflowFile: void 0,
+    outfitWorkflowFile: "QwenImage-Outfit.json",
+    improveWorkflowFile: "QwenImage-Improve.json",
+    loraFolder: "qwen",
+    hasNegativePrompt: false,
+    hasLoraClipStrength: false,
+    defaults: {
+      steps: 25,
+      cfg: 1,
+      width: 1024,
+      height: 1024,
+      sampler: "euler",
+      scheduler: "simple"
+    }
+  },
   "z-image": {
     id: "z-image",
     label: "Z-Image",
@@ -1112,53 +1132,58 @@ class WorkflowManager {
       this.patchGGUFPlugin();
     }
     for (const [modelId, profile] of Object.entries(MODEL_PROFILES)) {
-      try {
-        const filePath = join(workflowsDir, profile.workflowFile);
-        const raw = readFileSync(filePath, "utf-8");
-        const workflow = JSON.parse(raw);
-        let positiveNodeId = null;
-        let negativeNodeId = null;
-        let vaeNodeId = null;
-        let ksamplerNodeId = null;
-        let emptyLatentNodeId = null;
-        const ksampler = workflow.nodes.find((n) => n.type === "KSampler");
-        if (ksampler) {
-          ksamplerNodeId = ksampler.id;
-          const posNode = findOriginNode(workflow, ksampler.id, "positive");
-          if (posNode && posNode.type === "CLIPTextEncode") {
-            positiveNodeId = posNode.id;
-          }
-          const negNode = findOriginNode(workflow, ksampler.id, "negative");
-          if (negNode && negNode.type === "CLIPTextEncode") {
-            negativeNodeId = negNode.id;
-          }
-        }
-        const vaeDecode = workflow.nodes.find((n) => n.type === "VAEDecode");
-        if (vaeDecode) {
-          const vaeSrc = findOriginNode(workflow, vaeDecode.id, "vae");
-          if (vaeSrc) {
-            vaeNodeId = vaeSrc.id;
-          }
-        }
-        const emptyLatent = workflow.nodes.find(
-          (n) => n.type === "EmptyLatentImage" || n.type === "EmptySD3LatentImage"
-        );
-        if (emptyLatent) {
-          emptyLatentNodeId = emptyLatent.id;
-        }
-        const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId);
-        this.workflows[modelId] = {
-          workflow,
-          positiveNodeId,
-          negativeNodeId,
-          vaeNodeId,
-          ksamplerNodeId,
-          emptyLatentNodeId,
-          defaults
-        };
-      } catch (err) {
-        console.error(`[WorkflowManager] Erro ao carregar workflow para ${modelId}:`, err);
+      this.loadWorkflowInto(modelId, join(workflowsDir, profile.workflowFile));
+      if (profile.improveWorkflowFile) {
+        this.loadWorkflowInto(`${modelId}:improve`, join(workflowsDir, profile.improveWorkflowFile));
       }
+    }
+  }
+  loadWorkflowInto(key, filePath) {
+    try {
+      const raw = readFileSync(filePath, "utf-8");
+      const workflow = JSON.parse(raw);
+      let positiveNodeId = null;
+      let negativeNodeId = null;
+      let vaeNodeId = null;
+      let ksamplerNodeId = null;
+      let emptyLatentNodeId = null;
+      const ksampler = workflow.nodes.find((n) => n.type === "KSampler");
+      if (ksampler) {
+        ksamplerNodeId = ksampler.id;
+        const posNode = findOriginNode(workflow, ksampler.id, "positive");
+        if (posNode && (posNode.type === "CLIPTextEncode" || posNode.type === "TextEncodeQwenImage21")) {
+          positiveNodeId = posNode.id;
+        }
+        const negNode = findOriginNode(workflow, ksampler.id, "negative");
+        if (negNode && (negNode.type === "CLIPTextEncode" || negNode.type === "TextEncodeQwenImage21")) {
+          negativeNodeId = negNode.id;
+        }
+      }
+      const vaeDecode = workflow.nodes.find((n) => n.type === "VAEDecode");
+      if (vaeDecode) {
+        const vaeSrc = findOriginNode(workflow, vaeDecode.id, "vae");
+        if (vaeSrc) {
+          vaeNodeId = vaeSrc.id;
+        }
+      }
+      const emptyLatent = workflow.nodes.find(
+        (n) => n.type === "EmptyLatentImage" || n.type === "EmptySD3LatentImage"
+      );
+      if (emptyLatent) {
+        emptyLatentNodeId = emptyLatent.id;
+      }
+      const defaults = this.extractDefaults(workflow, positiveNodeId, negativeNodeId);
+      this.workflows[key] = {
+        workflow,
+        positiveNodeId,
+        negativeNodeId,
+        vaeNodeId,
+        ksamplerNodeId,
+        emptyLatentNodeId,
+        defaults
+      };
+    } catch (err) {
+      console.error(`[WorkflowManager] Erro ao carregar workflow ${key} (${filePath}):`, err);
     }
   }
   patchGGUFPlugin() {
@@ -1239,7 +1264,9 @@ class WorkflowManager {
       scheduler: ksampler?.widgets_values?.[5] ?? "simple",
       denoise: ksampler?.widgets_values?.[6] ?? 1,
       positivePrompt: positiveEncode?.widgets_values?.[0] ?? "",
-      negativePrompt: negativeEncode?.widgets_values?.[0] ?? "",
+      // TextEncodeQwenImage21 guarda [prompt, negative_prompt, resolution];
+      // CLIPTextEncode guarda apenas [text].
+      negativePrompt: negativeEncode?.type === "TextEncodeQwenImage21" ? negativeEncode.widgets_values?.[1] ?? "" : negativeEncode?.widgets_values?.[0] ?? "",
       loraName: loraLoader?.widgets_values?.[0] ?? "None",
       loraStrengthModel: loraLoader?.widgets_values?.[1] ?? 0.5,
       loraStrengthClip: loraLoader?.type === "LoraLoader" ? loraLoader.widgets_values?.[2] : 0.5,
@@ -1272,7 +1299,8 @@ class WorkflowManager {
   }
   buildPrompt(params, opts = {}) {
     const modelId = params.diffusionModel || "anima";
-    const data = this.workflows[modelId];
+    const improveKey = `${modelId}:improve`;
+    const data = params.editMode && this.workflows[improveKey] || this.workflows[modelId];
     const warnings = opts.warnings ?? [];
     if (!data) {
       throw new Error(`Workflow not loaded for model: ${modelId}`);
@@ -1320,6 +1348,13 @@ class WorkflowManager {
             if (params.negativePrompt) {
               widgetValues[0] = params.negativePrompt;
             }
+          }
+          break;
+        }
+        case "TextEncodeQwenImage21": {
+          widgetValues[0] = params.prompt;
+          if (params.negativePrompt) {
+            widgetValues[1] = params.negativePrompt;
           }
           break;
         }
@@ -1394,7 +1429,8 @@ class WorkflowManager {
               inputs[input.name] = [String(fromNodeId), fromSlot];
             }
           } else {
-            if (widgetIndex < widgetValues.length) {
+            const isHiddenOptionalSocket = input.shape === 7 && !("widget" in input && input.widget);
+            if (!isHiddenOptionalSocket && widgetIndex < widgetValues.length) {
               inputs[input.name] = widgetValues[widgetIndex];
               widgetIndex++;
             }
@@ -1402,6 +1438,15 @@ class WorkflowManager {
         }
       }
       nodeEntry.inputs = inputs;
+      delete inputs["upload"];
+      if (node.type === "UNETLoader" && typeof inputs.unet_name === "string" && inputs.unet_name.toLowerCase().endsWith(".gguf")) {
+        console.log(`[WorkflowManager] Swapping UNETLoader node ${node.id} (${inputs.unet_name}) to UnetLoaderGGUFAdvanced`);
+        nodeEntry.class_type = "UnetLoaderGGUFAdvanced";
+        delete inputs.weight_dtype;
+        inputs.dequant_dtype = "default";
+        inputs.patch_dtype = "default";
+        inputs.patch_on_device = false;
+      }
       if (node.type === "UnetLoaderGGUF") {
         nodeEntry.class_type = "UnetLoaderGGUFAdvanced";
         const ggufInputs = nodeEntry.inputs;
@@ -1550,7 +1595,42 @@ class WorkflowManager {
         );
       }
     }
-    if (isImg2Img && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
+    const teQwenNode = nodes.find((n) => n.type === "TextEncodeQwenImage21");
+    if (teQwenNode) {
+      const teEntry = prompt[String(teQwenNode.id)];
+      const originOf = (inputName) => {
+        const input = teQwenNode.inputs?.find((i) => i.name === inputName);
+        if (!input || input.link === null || input.link === void 0) return null;
+        const link = data.workflow.links?.find((l) => l && l[0] === input.link);
+        return link ? link[1] : null;
+      };
+      if (teEntry && params.imagePath) {
+        const srcId = originOf("images.image_1");
+        if (srcId !== null) {
+          if (params.editMode === "inpaint") {
+            delete teEntry.inputs["images.image_1"];
+            delete prompt[String(srcId)];
+          } else {
+            const srcEntry = prompt[String(srcId)];
+            if (srcEntry) srcEntry.inputs.image = params.imagePath;
+          }
+        }
+      }
+      if (teEntry) {
+        const refId = originOf("images.image_2");
+        if (refId !== null) {
+          if (params.refImagePath) {
+            const refEntry = prompt[String(refId)];
+            if (refEntry) refEntry.inputs.image = params.refImagePath;
+          } else {
+            delete teEntry.inputs["images.image_2"];
+            delete prompt[String(refId)];
+          }
+        }
+      }
+    }
+    const useNativeEditLatent = params.editMode === "edit";
+    if (isImg2Img && !useNativeEditLatent && params.imagePath && data.vaeNodeId && data.ksamplerNodeId) {
       const loadImageId = 99990;
       const vaeEncodeId = 99991;
       prompt[String(loadImageId)] = {
@@ -1572,6 +1652,7 @@ class WorkflowManager {
       if (hasMask) {
         const setMaskId = 99992;
         const loadMaskId = 99993;
+        const imageToMaskId = 99994;
         prompt[String(loadMaskId)] = {
           class_type: "LoadImage",
           _meta: { title: "LoadImage (mask)" },
@@ -1579,12 +1660,20 @@ class WorkflowManager {
             image: params.maskFilename || "mask.png"
           }
         };
+        prompt[String(imageToMaskId)] = {
+          class_type: "ImageToMask",
+          _meta: { title: "ImageToMask (mask)" },
+          inputs: {
+            image: [String(loadMaskId), 0],
+            channel: "red"
+          }
+        };
         prompt[String(setMaskId)] = {
           class_type: "SetLatentNoiseMask",
           _meta: { title: "SetLatentNoiseMask (inpaint)" },
           inputs: {
             samples: [String(vaeEncodeId), 0],
-            mask: [String(loadMaskId), 1]
+            mask: [String(imageToMaskId), 0]
           }
         };
         const ksamplerEntry = prompt[String(data.ksamplerNodeId)];
@@ -2359,7 +2448,9 @@ function sanitizeGenerationParams(raw) {
       return out;
     })(),
     denoise: p.denoise !== void 0 ? num(p.denoise, 1, 0.05, 1) : void 0,
+    editMode: p.editMode === "edit" || p.editMode === "refine" || p.editMode === "inpaint" ? p.editMode : void 0,
     imageBase64: typeof p.imageBase64 === "string" ? p.imageBase64 : void 0,
+    refImageBase64: typeof p.refImageBase64 === "string" ? p.refImageBase64 : void 0,
     maskBase64: typeof p.maskBase64 === "string" ? p.maskBase64 : void 0,
     poseImageBase64: typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : void 0,
     poseData: typeof p.poseData === "string" ? p.poseData : void 0,
@@ -2499,7 +2590,7 @@ function setupIPC() {
     requireMainWindow(event);
     const params = sanitizeGenerationParams(rawParams);
     console.log("[Anima] Iniciando melhoria de imagem (img2img)...");
-    console.log("[Anima] Modelo:", params.diffusionModel, "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
+    console.log("[Anima] Modelo:", params.diffusionModel, "| Modo:", params.editMode ?? "img2img", "| Prompt:", (params.prompt ?? "").slice(0, 80) + "...");
     if (!params.imageBase64) {
       throw new Error("Imagem não fornecida");
     }
@@ -2510,6 +2601,14 @@ function setupIPC() {
     const imgExt = imageMatch ? imageMatch[1] : "png";
     const inputFilename = `anima-improve-${Date.now()}.${imgExt === "jpeg" ? "jpg" : imgExt}`;
     await uploadImageToComfyUI(params.imageBase64, inputFilename, comfyInputDir, baseUrl);
+    let refImageFilename;
+    if (params.refImageBase64) {
+      const refMatch = params.refImageBase64.match(/^data:image\/(\w+);base64,/);
+      const refExt = refMatch ? refMatch[1] : "png";
+      refImageFilename = `anima-improve-ref-${Date.now()}.${refExt === "jpeg" ? "jpg" : refExt}`;
+      await uploadImageToComfyUI(params.refImageBase64, refImageFilename, comfyInputDir, baseUrl);
+      console.log("[Anima] Imagem de referência enviada para ComfyUI:", refImageFilename);
+    }
     let poseImageFilename;
     if (params.poseImageBase64) {
       poseImageFilename = `anima-pose-${Date.now()}.png`;
@@ -2524,6 +2623,7 @@ function setupIPC() {
     const improveParams = {
       ...params,
       imagePath: inputFilename,
+      refImagePath: refImageFilename,
       filenamePrefix: params.filenamePrefix || "anima-improve",
       maskFilename,
       poseImageFilename
@@ -2566,7 +2666,7 @@ function setupIPC() {
         throw err;
       }
     } finally {
-      removeTempFiles([inputFilename, poseImageFilename, maskFilename], comfyInputDir);
+      removeTempFiles([inputFilename, refImageFilename, poseImageFilename, maskFilename], comfyInputDir);
     }
   });
   ipcMain.handle("comfyui:generatePose", async (event, rawParams) => {
@@ -2668,9 +2768,9 @@ function setupIPC() {
     const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-outfit";
     if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
     if (!outfitImageBase64) throw new Error("Imagem de roupa não fornecida");
-    const outfitWorkflowFile = MODEL_PROFILES.krea2.outfitWorkflowFile;
+    const outfitWorkflowFile = MODEL_PROFILES["qwen-image"].outfitWorkflowFile;
     if (!outfitWorkflowFile) {
-      throw new Error("Perfil krea2 não define outfitWorkflowFile");
+      throw new Error("Perfil qwen-image não define outfitWorkflowFile");
     }
     const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile);
     if (!existsSync(outfitWorkflowPath)) {
@@ -2697,7 +2797,7 @@ function setupIPC() {
         return typeof val === "number" ? val : fallback;
       };
       const outfitParams = {
-        diffusionModel: "krea2",
+        diffusionModel: "qwen-image",
         prompt: "",
         negativePrompt: "",
         seed,

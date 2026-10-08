@@ -39,18 +39,16 @@ export const BrushCanvas = forwardRef<BrushCanvasHandle, BrushCanvasProps>(
         const exportCtx = exportCanvas.getContext('2d')
         if (!exportCtx) return null
 
-        exportCtx.fillStyle = '#000000'
-        exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
-        exportCtx.drawImage(maskCanvas, 0, 0)
-
-        const exportData = exportCtx.getImageData(0, 0, exportCanvas.width, exportCanvas.height)
-        for (let i = 0; i < exportData.data.length; i += 4) {
-          if (exportData.data[i + 3] > 0) {
-            exportData.data[i] = 255
-            exportData.data[i + 1] = 255
-            exportData.data[i + 2] = 255
-            exportData.data[i + 3] = 255
-          }
+        // Máscara binária: área pintada = branco, fundo = preto (alpha opaco).
+        // Lemos o alpha direto do canvas de traço: compor sobre fundo opaco e
+        // depois testar alpha > 0 deixaria o fundo branco junto (tudo branco).
+        const exportData = exportCtx.createImageData(exportCanvas.width, exportCanvas.height)
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          const v = imageData.data[i + 3] > 0 ? 255 : 0
+          exportData.data[i] = v
+          exportData.data[i + 1] = v
+          exportData.data[i + 2] = v
+          exportData.data[i + 3] = 255
         }
         exportCtx.putImageData(exportData, 0, 0)
 
@@ -219,7 +217,16 @@ export const BrushCanvas = forwardRef<BrushCanvasHandle, BrushCanvasProps>(
       drawBrushStroke(x, y)
     }, [drawBrushStroke])
 
-    if (!visible) return null
+    if (!visible) {
+      // Mantém os canvases no DOM (display:none) para a máscara pintada
+      // sobreviver a toggles de comparação; sair da árvore zera o traçado.
+      return (
+        <div className="absolute inset-0 z-10" style={{ display: 'none' }}>
+          <canvas ref={canvasRef} />
+          <canvas ref={maskCanvasRef} />
+        </div>
+      )
+    }
 
     return (
       <div className="absolute inset-0 z-10">

@@ -258,7 +258,9 @@ export function ImageImprove() {
   }, [originalSrc, prompt, editMode, denoise, refSrc, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
 
   const canGenerate = !!originalSrc && !!prompt.trim() && !generating && !!status.online
-  const showBrush = editMode === 'inpaint' && (!resultSrc || !showingResult)
+  // Pincel: montado enquanto estiver no modo inpaint (a máscara sobrevive aos
+  // toggles de comparação); visível só olhando o original, fora da geração.
+  const showBrush = editMode === 'inpaint' && !generating && (!resultSrc || !showingResult)
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -304,17 +306,17 @@ export function ImageImprove() {
                 draggable={false}
               />
 
-              {showBrush && originalSrc && imageDimensions.width > 0 && (
+              {editMode === 'inpaint' && originalSrc && imageDimensions.width > 0 && (
                 <BrushCanvas
                   ref={brushRef}
                   imageSrc={originalSrc}
                   imageWidth={imageDimensions.width}
                   imageHeight={imageDimensions.height}
-                  visible={true}
+                  visible={showBrush}
                 />
               )}
 
-              <div className={`absolute top-3 left-3 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider ${resultSrc && showingResult ? 'bg-success/90 text-white' : editMode === 'inpaint' ? 'bg-accent/90 text-white' : 'bg-surface/80 text-text-secondary backdrop-blur-sm'}`}>
+              <div className={`absolute top-3 left-3 z-20 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider ${resultSrc && showingResult ? 'bg-success/90 text-white' : editMode === 'inpaint' ? 'bg-accent/90 text-white' : 'bg-surface/80 text-text-secondary backdrop-blur-sm'}`}>
                 {resultSrc && showingResult
                   ? 'Melhorado'
                   : editMode === 'inpaint'
@@ -328,7 +330,7 @@ export function ImageImprove() {
               {resultSrc && (
                 <button
                   onClick={() => setShowingResult(!showingResult)}
-                  className="absolute top-3 right-3 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider bg-surface/80 text-text-secondary backdrop-blur-sm hover:bg-surface hover:text-text-primary transition-colors flex items-center gap-1"
+                  className="absolute top-3 right-3 z-20 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider bg-surface/80 text-text-secondary backdrop-blur-sm hover:bg-surface hover:text-text-primary transition-colors flex items-center gap-1"
                   title={showingResult ? 'Ver original' : 'Ver resultado'}
                 >
                   <ArrowLeftRight size={12} />
@@ -366,7 +368,7 @@ export function ImageImprove() {
             </div>
 
             {/* Brush controls below image */}
-            {editMode === 'inpaint' && (!resultSrc || !showingResult) && (
+            {showBrush && (
               <div className="flex items-center gap-2 bg-surface-secondary border border-border rounded-xl px-4 py-2.5 shadow-sm">
                 <Paintbrush size={14} className="text-accent" />
                 <button
