@@ -84,12 +84,13 @@
         ]
       },
       "widgets_values": [
-        "qwen/qwen_image_2.1_int8_convrot.safetensors",
+        "qwen\\qwen_image_2.1_int8_convrot.safetensors",
         "default"
       ],
       "widgets_values_named": {
-        "unet_name": "qwen/qwen_image_2.1_int8_convrot.safetensors",
-        "weight_dtype": "default"
+        "unet_name": "qwen\\qwen_image_2.1_int8_convrot.safetensors",
+        "weight_dtype": "default",
+        "folder": "diffusion_models"
       }
     },
     {
@@ -136,7 +137,8 @@
       "widgets_values_named": {
         "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
         "type": "qwen_image",
-        "device": "default"
+        "device": "default",
+        "folder": "text_encoders"
       }
     },
     {
@@ -180,7 +182,8 @@
         "qwen_image_2.1_vae_bf16.safetensors"
       ],
       "widgets_values_named": {
-        "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+        "vae_name": "qwen_image_2.1_vae_bf16.safetensors",
+        "folder": "vae"
       }
     },
     {
