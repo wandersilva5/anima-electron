@@ -1006,6 +1006,127 @@ export class WorkflowManager {
   }
 
   /**
+   * Constrói o prompt da API do ComfyUI para a aba Pose.
+   *
+   * O workflow `VNCCS-PoseStudio-QI21.json` dependia do nó 488
+   * (`VNCCS_PoseStudio`), que é client-side only: sem a captura síncrona do
+   * navegador ele lança RuntimeError ("Backend 3D rendering has been removed").
+   * Como o mannequin agora é renderizado aqui em Three.js, o nó 488 é
+   * substituído por um `LoadImage` da pose capturada:
+   *   488:0 → 484:1 (images.image_1)  vira LoadImage
+   *   488:1 → 484:5 (prompt)          é removido (voltamos ao widget,
+   *                                    "replace the pose of <image 2>...")
+   *   488 → 505 (GetImageSize) → 479   passa a ler a nova imagem
+   *
+   * @param workflowPath caminho do JSON em formato UI
+   * @param charFilename  personagem (identidade) — nó 470
+   * @param poseFilename  render do mannequin — substitui o 488
+   * @param seed          semente do KSampler
+   */
+  buildPosePrompt(
+    workflowPath: string,
+    charFilename: string,
+    poseFilename: string,
+    seed: number
+  ): Record<string, unknown> {
+    const raw = readFileSync(workflowPath, 'utf-8')
+    const workflow: WorkflowJSON = JSON.parse(raw)
+
+    const POSE_NODE_ID = 488
+    const POSE_LOAD_IMAGE_ID = 90001
+    const STATIC_POSE_PROMPT =
+      'replace the pose of <image 2> with the pose of <image 1>. keep the character of <image 2>'
+
+    const prompt = this.convertUiToApi(workflow)
+
+    // Remove o nó client-side e o comparador (saída não consumida).
+    delete prompt[String(POSE_NODE_ID)]
+    delete prompt['504']
+
+    // LoadImage que entra no lugar do VNCCS_PoseStudio.
+    prompt[String(POSE_LOAD_IMAGE_ID)] = {
+      class_type: 'LoadImage',
+      _meta: { title: 'LoadImage (pose renderizada)' },
+      inputs: { image: poseFilename }
+    }
+
+    const fix = (id: string, fn: (inputs: Record<string, unknown>) => void): void => {
+      const entry = prompt[id] as { inputs?: Record<string, unknown> } | undefined
+      if (entry?.inputs) fn(entry.inputs)
+    }
+
+    // Personagem (identidade)
+    fix('470', (i) => { i.image = charFilename; delete i.upload })
+
+    // image_1 do encoder = pose capturada; prompt volta a ser o widget fixo
+    // (o link proveniente do 488 ficaria sem origem e derrubaria o envio).
+    fix('484', (i) => {
+      i['images.image_1'] = [String(POSE_LOAD_IMAGE_ID), 0]
+      i.prompt = STATIC_POSE_PROMPT
+    })
+
+    // GetImageSize passa a medir a pose nova → EmptyLatentImage acompanha.
+    fix('505', (i) => { i.image = [String(POSE_LOAD_IMAGE_ID), 0] })
+
+    // Semente
+    fix('481', (i) => { i.seed = seed })
+
+    return prompt
+  }
+
+  /**
+   * Conversão genérica UI → API (links + widgets posicionais).
+   * Compartilhada pelos fluxos de fora da aba Gerar (Pose, Outfit).
+   */
+  private convertUiToApi(workflow: WorkflowJSON): Record<string, unknown> {
+    const controlAfterGen = new Set(['randomize', 'fixed', 'increment', 'decrement', 'comfy'])
+    const prompt: Record<string, unknown> = {}
+
+    for (const node of workflow.nodes) {
+      const inputs: Record<string, unknown> = {}
+
+      // Widgets primeiro, links depois — é a precedência do graphToPrompt
+      // (link sobrescreve widget), idem ao runtime do ComfyUI.
+      const named = (node as { widgets_values_named?: Record<string, unknown> }).widgets_values_named
+      if (named) {
+        for (const [name, value] of Object.entries(named)) {
+          if (name === 'upload' || name === 'control_after_generate') continue
+          inputs[name] = value
+        }
+      } else if (node.widgets_values?.length) {
+        // Fallback: widgets posicionais (formato antigo).
+        const isKSampler = node.type === 'KSampler' || node.type === 'KSamplerAdvanced'
+        const widgetInputs = (node.inputs ?? []).filter(
+          (i) => (i.link === null || i.link === undefined) && i.shape !== 7
+        )
+        let wIdx = 0
+        for (const val of node.widgets_values) {
+          if (wIdx >= widgetInputs.length) break
+          if (isKSampler && typeof val === 'string' && controlAfterGen.has(val)) continue
+          inputs[widgetInputs[wIdx].name] = val
+          wIdx++
+        }
+      }
+
+      for (const inp of node.inputs ?? []) {
+        if (inp.link === null || inp.link === undefined) continue
+        const link = workflow.links.find((l) => l[0] === inp.link)
+        if (link) inputs[inp.name] = [String(link[1]), link[2] ?? 0]
+      }
+
+      delete inputs['upload']
+
+      prompt[String(node.id)] = {
+        class_type: node.type,
+        _meta: { title: (node as { title?: string }).title || node.type },
+        inputs
+      }
+    }
+
+    return prompt
+  }
+
+  /**
    * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
    * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
    *   image1 = personagem (identidade)   → nó LoadImage id 4
@@ -1033,55 +1154,8 @@ export class WorkflowManager {
   ): Record<string, unknown> {
     const raw = readFileSync(workflowPath, 'utf-8')
     const workflow: WorkflowJSON = JSON.parse(raw)
-    const controlAfterGenValues = new Set(['randomize', 'fixed', 'increment', 'decrement', 'comfy'])
 
-    // Converte formato UI → formato API do ComfyUI
-    const prompt: Record<string, unknown> = {}
-    for (const node of workflow.nodes) {
-      const inputs: Record<string, unknown> = {}
-
-      // Inputs conectados via links
-      if (node.inputs) {
-        for (const inp of node.inputs) {
-          if (inp.link !== null && inp.link !== undefined) {
-            const link = workflow.links.find((l) => l[0] === inp.link)
-            if (link) {
-              inputs[inp.name] = [String(link[1]), link[2] ?? 0]
-            }
-          }
-        }
-      }
-
-      // Widget values: apenas inputs sem link (widgets)
-      // KSampler UI export inclui control_after_generate (valor como "randomize",
-      // "fixed") que não é um input da API — precisa ser pulado para não deslocar
-      // os demais valores (steps, cfg, sampler_name, etc.).
-      // Inputs com shape=7 (optional/hidden) também são pulados pois não possuem
-      // widget values correspondentes no export da UI.
-      if (node.widgets_values && node.widgets_values.length > 0) {
-        const isKSampler = node.type === 'KSampler' || node.type === 'KSamplerAdvanced'
-        const widgetInputs = (node.inputs ?? []).filter(
-          (i) => (i.link === null || i.link === undefined) && i.shape !== 7
-        )
-        let wIdx = 0
-        for (const val of node.widgets_values) {
-          if (wIdx >= widgetInputs.length) break
-          // No KSampler, pula control_after_generate (UI-only widget)
-          if (isKSampler && typeof val === 'string' && controlAfterGenValues.has(val)) continue
-          inputs[widgetInputs[wIdx].name] = val
-          wIdx++
-        }
-      }
-
-      // Remove inputs que só existem na UI (não fazem parte da API do ComfyUI)
-      delete inputs['upload'] // widget IMAGEUPLOAD do LoadImage
-
-      prompt[String(node.id)] = {
-        class_type: node.type,
-        _meta: { title: (node as any).title || node.type },
-        inputs
-      }
-    }
+    const prompt = this.convertUiToApi(workflow)
 
     // Substitui filenames nos LoadImage
     const charNode = prompt['4'] as { inputs: Record<string, unknown> } | undefined

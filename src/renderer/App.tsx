@@ -254,8 +254,8 @@ export default function App() {
           ) : activeTab === 'outfit' ? (
             <OutfitStudio />
           ) : null}
-          {/* PoseStudio fica sempre montado: o <webview> do ComfyUI não pode
-              ser recriado a cada troca de aba (a captura 3D vive lá dentro). */}
+          {/* PoseStudio fica sempre montado: o mannequin 3D mantém a pose
+              montada ao trocar de aba. */}
           <div className={activeTab === 'pose' ? 'flex-1 flex min-w-0 overflow-hidden' : 'hidden'}>
             <PoseStudio />
           </div>

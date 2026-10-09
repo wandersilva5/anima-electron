@@ -410,10 +410,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
-      // O editor VNCCS Pose Studio (3D pose + captura) só existe na UI do
-      // ComfyUI; a aba Pose embute essa UI em <webview>.
-      webviewTag: true
+      sandbox: false
     },
     show: false,
     backgroundColor: '#0f0f13',
@@ -593,82 +590,46 @@ function setupIPC(): void {
 
     const p = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>
     const charImageBase64 = typeof p.charImageBase64 === 'string' ? p.charImageBase64 : null
-    const promptApi = p.promptApi && typeof p.promptApi === 'object' && !Array.isArray(p.promptApi)
-      ? (p.promptApi as Record<string, { class_type?: string; inputs?: Record<string, unknown> }>)
-      : null
+    const poseImageBase64 = typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : null
     const seed = typeof p.seed === 'number' ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647)
     const filenamePrefix = typeof p.filenamePrefix === 'string' ? p.filenamePrefix : 'anima-pose'
 
     if (!charImageBase64) throw new Error('Imagem da personagem não fornecida')
-    if (!promptApi || Object.keys(promptApi).length === 0) {
-      throw new Error('Pose não configurada — ajuste a pose no editor VNCCS Pose Studio antes de gerar')
+    if (!poseImageBase64) throw new Error('Pose não montada — posicione o mannequin antes de gerar')
+
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile
+    if (!poseWorkflowFile) throw new Error('Perfil krea2 não define poseWorkflowFile')
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile)
+    if (!existsSync(poseWorkflowPath)) {
+      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`)
     }
 
     const settings = settingsManager.get()
     const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
     const baseUrl = comfyClient.getBaseUrl()
 
-    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/)
-    const charExt = charMatch ? (charMatch[1] === 'jpeg' ? 'jpg' : charMatch[1]) : 'png'
-    const charFilename = `anima-pose-char-${Date.now()}.${charExt}`
+    const dataUrlToFilename = (base64: string, stem: string): { filename: string; ext: string } => {
+      const m = base64.match(/^data:image\/(\w+);base64,/)
+      const ext = m ? (m[1] === 'jpeg' ? 'jpg' : m[1]) : 'png'
+      return { filename: `${stem}-${Date.now()}.${ext}`, ext }
+    }
+
+    const charFilename = dataUrlToFilename(charImageBase64, 'anima-pose-char').filename
+    const poseFilename = dataUrlToFilename(poseImageBase64, 'anima-pose-track').filename
 
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl)
-    console.log('[Anima] Pose Studio: personagem=%s', charFilename)
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl)
+    console.log('[Anima] Pose: personagem=%s, pose=%s', charFilename, poseFilename)
 
     try {
-      // O prompt vem serializado pelo frontend embarcado (app.graphToPrompt);
-      // o app só sobrescreve o que ele controla: imagem da personagem, seed
-      // e prefixo do arquivo salvo.
-      const prompt = promptApi
-      const keys = Object.keys(prompt)
-      let poseStudioNode: { inputs?: Record<string, unknown> } | null = null
+      const prompt = workflowManager.buildPosePrompt(poseWorkflowPath, charFilename, poseFilename, seed)
+      console.log('[Anima] Pose prompt construído, nós:', Object.keys(prompt).length)
 
-      const imageKeys = keys.filter((k) => prompt[k]?.class_type === 'LoadImage')
-      const imageKey = imageKeys.includes('470')
-        ? '470'
-        : imageKeys.length === 1
-          ? imageKeys[0]
-          : null
-      if (!imageKey) {
-        throw new Error(imageKeys.length === 0
-          ? 'Workflow de pose inválido: nó LoadImage não encontrado'
-          : 'Workflow de pose inválido: múltiplos nós LoadImage — use o workflow da aba Pose')
-      }
-
-      for (const key of keys) {
-        const node = prompt[key]
-        if (!node?.inputs) continue
-        if (key === imageKey) {
-          node.inputs.image = charFilename
-          delete node.inputs.upload
-        } else if (node.class_type === 'KSampler') {
-          node.inputs.seed = seed
-        } else if (node.class_type === 'SaveImage') {
-          node.inputs.filename_prefix = filenamePrefix
-        } else if (node.class_type === 'VNCCS_PoseStudio') {
-          poseStudioNode = node
-        }
-      }
-      if (!poseStudioNode) throw new Error('Workflow de pose inválido: nó VNCCS_PoseStudio não encontrado')
-      console.log('[Anima] Pose prompt construído, nós:', keys.length)
-
-      const readNumInput = (classType: string, inputName: string, fallback: number): number => {
-        const key = keys.find((k) => prompt[k]?.class_type === classType)
-        const val = key ? prompt[key]?.inputs?.[inputName] : undefined
-        return typeof val === 'number' ? val : fallback
-      }
-
-      // Dimensões reais exportadas pelo editor (view_width/view_height)
-      let width = 1024
-      let height = 1024
-      try {
-        const poseDataRaw = poseStudioNode.inputs?.pose_data
-        const poseData = typeof poseDataRaw === 'string' ? JSON.parse(poseDataRaw) : null
-        const view = poseData?.export ?? poseData?.view
-        if (typeof view?.view_width === 'number') width = view.view_width
-        if (typeof view?.view_height === 'number') height = view.view_height
-      } catch {
-        // pose_data ausente/inválido — mantém 1024×1024 no histórico
+      const entryOf = (id: string): { inputs?: Record<string, unknown> } | undefined =>
+        prompt[id] as { inputs?: Record<string, unknown> } | undefined
+      const readNum = (id: string, input: string, fallback: number): number => {
+        const v = entryOf(id)?.inputs?.[input]
+        return typeof v === 'number' ? v : fallback
       }
 
       const poseParams = {
@@ -676,10 +637,10 @@ function setupIPC(): void {
         prompt: '',
         negativePrompt: '',
         seed,
-        steps: readNumInput('KSampler', 'steps', 25),
-        cfg: readNumInput('KSampler', 'cfg', 1),
-        width,
-        height,
+        steps: readNum('481', 'steps', 25),
+        cfg: readNum('481', 'cfg', 1),
+        width: readNum('479', 'width', 1024),
+        height: readNum('479', 'height', 1024),
         loras: [],
         modelName: 'qwen-image-2.1'
       }
@@ -703,7 +664,8 @@ function setupIPC(): void {
       const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams as unknown as Record<string, unknown>, filenamePrefix)
       return { promptId: response.prompt_id, images: savedImages }
     } finally {
-      removeTempFiles([charFilename], comfyInputDir)
+      // Remove arquivos temporários enviados ao ComfyUI para não acumular em input/
+      removeTempFiles([charFilename, poseFilename], comfyInputDir)
     }
   })
 
@@ -1004,18 +966,6 @@ function setupIPC(): void {
 
   ipcMain.handle('app:getVersion', async () => {
     return app.getVersion()
-  })
-
-  ipcMain.handle('app:getPoseStudioWorkflow', async (event) => {
-    requireMainWindow(event)
-    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile
-    if (!poseWorkflowFile) return null
-    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile)
-    if (!existsSync(poseWorkflowPath)) {
-      console.warn('[Anima] Workflow de pose não encontrado:', poseWorkflowPath)
-      return null
-    }
-    return JSON.parse(readFileSync(poseWorkflowPath, 'utf-8'))
   })
 
   ipcMain.handle('file:readImage', async (event, filePath: string) => {

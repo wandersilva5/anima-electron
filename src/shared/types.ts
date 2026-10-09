@@ -39,10 +39,10 @@ export interface ModelProfile {
 export interface PoseGenerationParams {
   charImageBase64: string      // Imagem da personagem (identidade)
   /**
-   * Prompt no formato da API do ComfyUI, serializado pelo próprio frontend
-   * embarcado (app.graphToPrompt()). O main só sobrescreve imagem/seed/prefixo.
+   * Render PNG do mannequin Three.js (fundo branco, mesh cinza clay, 1024×1024)
+   * enviado como imagem de pose. Vira image_1 do pipeline Qwen.
    */
-  promptApi?: Record<string, unknown>
+  poseImageBase64: string
   seed?: number
   filenamePrefix?: string
   modelName?: string           // Checkpoint opcional

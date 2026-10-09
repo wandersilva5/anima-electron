@@ -24,7 +24,7 @@ export function RecreateTab() {
   const [regional, setRegional] = useState<RegionalSettings>(
     savedSettings.regional ?? { enabled: false, face: null, breasts: null, body: null }
   )
-  const [regionalOpen, setRegionalOpen] = useState(true)
+  const [regionalOpen, setRegionalOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)

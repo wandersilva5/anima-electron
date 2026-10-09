@@ -1897,6 +1897,100 @@ class WorkflowManager {
     );
   }
   /**
+   * Constrói o prompt da API do ComfyUI para a aba Pose.
+   *
+   * O workflow `VNCCS-PoseStudio-QI21.json` dependia do nó 488
+   * (`VNCCS_PoseStudio`), que é client-side only: sem a captura síncrona do
+   * navegador ele lança RuntimeError ("Backend 3D rendering has been removed").
+   * Como o mannequin agora é renderizado aqui em Three.js, o nó 488 é
+   * substituído por um `LoadImage` da pose capturada:
+   *   488:0 → 484:1 (images.image_1)  vira LoadImage
+   *   488:1 → 484:5 (prompt)          é removido (voltamos ao widget,
+   *                                    "replace the pose of <image 2>...")
+   *   488 → 505 (GetImageSize) → 479   passa a ler a nova imagem
+   *
+   * @param workflowPath caminho do JSON em formato UI
+   * @param charFilename  personagem (identidade) — nó 470
+   * @param poseFilename  render do mannequin — substitui o 488
+   * @param seed          semente do KSampler
+   */
+  buildPosePrompt(workflowPath, charFilename, poseFilename, seed) {
+    const raw = readFileSync(workflowPath, "utf-8");
+    const workflow = JSON.parse(raw);
+    const POSE_NODE_ID = 488;
+    const POSE_LOAD_IMAGE_ID = 90001;
+    const STATIC_POSE_PROMPT = "replace the pose of <image 2> with the pose of <image 1>. keep the character of <image 2>";
+    const prompt = this.convertUiToApi(workflow);
+    delete prompt[String(POSE_NODE_ID)];
+    delete prompt["504"];
+    prompt[String(POSE_LOAD_IMAGE_ID)] = {
+      class_type: "LoadImage",
+      _meta: { title: "LoadImage (pose renderizada)" },
+      inputs: { image: poseFilename }
+    };
+    const fix = (id, fn) => {
+      const entry = prompt[id];
+      if (entry?.inputs) fn(entry.inputs);
+    };
+    fix("470", (i) => {
+      i.image = charFilename;
+      delete i.upload;
+    });
+    fix("484", (i) => {
+      i["images.image_1"] = [String(POSE_LOAD_IMAGE_ID), 0];
+      i.prompt = STATIC_POSE_PROMPT;
+    });
+    fix("505", (i) => {
+      i.image = [String(POSE_LOAD_IMAGE_ID), 0];
+    });
+    fix("481", (i) => {
+      i.seed = seed;
+    });
+    return prompt;
+  }
+  /**
+   * Conversão genérica UI → API (links + widgets posicionais).
+   * Compartilhada pelos fluxos de fora da aba Gerar (Pose, Outfit).
+   */
+  convertUiToApi(workflow) {
+    const controlAfterGen = /* @__PURE__ */ new Set(["randomize", "fixed", "increment", "decrement", "comfy"]);
+    const prompt = {};
+    for (const node of workflow.nodes) {
+      const inputs = {};
+      const named = node.widgets_values_named;
+      if (named) {
+        for (const [name, value] of Object.entries(named)) {
+          if (name === "upload" || name === "control_after_generate") continue;
+          inputs[name] = value;
+        }
+      } else if (node.widgets_values?.length) {
+        const isKSampler = node.type === "KSampler" || node.type === "KSamplerAdvanced";
+        const widgetInputs = (node.inputs ?? []).filter(
+          (i) => (i.link === null || i.link === void 0) && i.shape !== 7
+        );
+        let wIdx = 0;
+        for (const val of node.widgets_values) {
+          if (wIdx >= widgetInputs.length) break;
+          if (isKSampler && typeof val === "string" && controlAfterGen.has(val)) continue;
+          inputs[widgetInputs[wIdx].name] = val;
+          wIdx++;
+        }
+      }
+      for (const inp of node.inputs ?? []) {
+        if (inp.link === null || inp.link === void 0) continue;
+        const link = workflow.links.find((l) => l[0] === inp.link);
+        if (link) inputs[inp.name] = [String(link[1]), link[2] ?? 0];
+      }
+      delete inputs["upload"];
+      prompt[String(node.id)] = {
+        class_type: node.type,
+        _meta: { title: node.title || node.type },
+        inputs
+      };
+    }
+    return prompt;
+  }
+  /**
    * Constrói o prompt da API do ComfyUI para o workflow Krea2-Outfit.
    * O workflow usa TextEncodeQwenImageEditPlus com duas imagens:
    *   image1 = personagem (identidade)   → nó LoadImage id 4
@@ -1913,40 +2007,7 @@ class WorkflowManager {
   buildTwoImagePrompt(workflowPath, image1Filename, image2Filename, seed) {
     const raw = readFileSync(workflowPath, "utf-8");
     const workflow = JSON.parse(raw);
-    const controlAfterGenValues = /* @__PURE__ */ new Set(["randomize", "fixed", "increment", "decrement", "comfy"]);
-    const prompt = {};
-    for (const node of workflow.nodes) {
-      const inputs = {};
-      if (node.inputs) {
-        for (const inp of node.inputs) {
-          if (inp.link !== null && inp.link !== void 0) {
-            const link = workflow.links.find((l) => l[0] === inp.link);
-            if (link) {
-              inputs[inp.name] = [String(link[1]), link[2] ?? 0];
-            }
-          }
-        }
-      }
-      if (node.widgets_values && node.widgets_values.length > 0) {
-        const isKSampler = node.type === "KSampler" || node.type === "KSamplerAdvanced";
-        const widgetInputs = (node.inputs ?? []).filter(
-          (i) => (i.link === null || i.link === void 0) && i.shape !== 7
-        );
-        let wIdx = 0;
-        for (const val of node.widgets_values) {
-          if (wIdx >= widgetInputs.length) break;
-          if (isKSampler && typeof val === "string" && controlAfterGenValues.has(val)) continue;
-          inputs[widgetInputs[wIdx].name] = val;
-          wIdx++;
-        }
-      }
-      delete inputs["upload"];
-      prompt[String(node.id)] = {
-        class_type: node.type,
-        _meta: { title: node.title || node.type },
-        inputs
-      };
-    }
+    const prompt = this.convertUiToApi(workflow);
     const charNode = prompt["4"];
     if (charNode?.inputs) charNode.inputs["image"] = image1Filename;
     const refNode = prompt["5"];
@@ -2523,10 +2584,7 @@ function createWindow() {
       preload: join(__dirname, "../preload/index.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
-      // O editor VNCCS Pose Studio (3D pose + captura) só existe na UI do
-      // ComfyUI; a aba Pose embute essa UI em <webview>.
-      webviewTag: true
+      sandbox: false
     },
     show: false,
     backgroundColor: "#0f0f13",
@@ -2673,70 +2731,47 @@ function setupIPC() {
     requireMainWindow(event);
     const p = rawParams && typeof rawParams === "object" ? rawParams : {};
     const charImageBase64 = typeof p.charImageBase64 === "string" ? p.charImageBase64 : null;
-    const promptApi = p.promptApi && typeof p.promptApi === "object" && !Array.isArray(p.promptApi) ? p.promptApi : null;
+    const poseImageBase64 = typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : null;
     const seed = typeof p.seed === "number" ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647);
     const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-pose";
     if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
-    if (!promptApi || Object.keys(promptApi).length === 0) {
-      throw new Error("Pose não configurada — ajuste a pose no editor VNCCS Pose Studio antes de gerar");
+    if (!poseImageBase64) throw new Error("Pose não montada — posicione o mannequin antes de gerar");
+    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile;
+    if (!poseWorkflowFile) throw new Error("Perfil krea2 não define poseWorkflowFile");
+    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile);
+    if (!existsSync(poseWorkflowPath)) {
+      throw new Error(`Workflow de pose não encontrado: ${poseWorkflowPath}`);
     }
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
     const baseUrl = comfyClient.getBaseUrl();
-    const charMatch = charImageBase64.match(/^data:image\/(\w+);base64,/);
-    const charExt = charMatch ? charMatch[1] === "jpeg" ? "jpg" : charMatch[1] : "png";
-    const charFilename = `anima-pose-char-${Date.now()}.${charExt}`;
+    const dataUrlToFilename = (base64, stem) => {
+      const m = base64.match(/^data:image\/(\w+);base64,/);
+      const ext = m ? m[1] === "jpeg" ? "jpg" : m[1] : "png";
+      return { filename: `${stem}-${Date.now()}.${ext}`, ext };
+    };
+    const charFilename = dataUrlToFilename(charImageBase64, "anima-pose-char").filename;
+    const poseFilename = dataUrlToFilename(poseImageBase64, "anima-pose-track").filename;
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl);
-    console.log("[Anima] Pose Studio: personagem=%s", charFilename);
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl);
+    console.log("[Anima] Pose: personagem=%s, pose=%s", charFilename, poseFilename);
     try {
-      const prompt = promptApi;
-      const keys = Object.keys(prompt);
-      let poseStudioNode = null;
-      const imageKeys = keys.filter((k) => prompt[k]?.class_type === "LoadImage");
-      const imageKey = imageKeys.includes("470") ? "470" : imageKeys.length === 1 ? imageKeys[0] : null;
-      if (!imageKey) {
-        throw new Error(imageKeys.length === 0 ? "Workflow de pose inválido: nó LoadImage não encontrado" : "Workflow de pose inválido: múltiplos nós LoadImage — use o workflow da aba Pose");
-      }
-      for (const key of keys) {
-        const node = prompt[key];
-        if (!node?.inputs) continue;
-        if (key === imageKey) {
-          node.inputs.image = charFilename;
-          delete node.inputs.upload;
-        } else if (node.class_type === "KSampler") {
-          node.inputs.seed = seed;
-        } else if (node.class_type === "SaveImage") {
-          node.inputs.filename_prefix = filenamePrefix;
-        } else if (node.class_type === "VNCCS_PoseStudio") {
-          poseStudioNode = node;
-        }
-      }
-      if (!poseStudioNode) throw new Error("Workflow de pose inválido: nó VNCCS_PoseStudio não encontrado");
-      console.log("[Anima] Pose prompt construído, nós:", keys.length);
-      const readNumInput = (classType, inputName, fallback) => {
-        const key = keys.find((k) => prompt[k]?.class_type === classType);
-        const val = key ? prompt[key]?.inputs?.[inputName] : void 0;
-        return typeof val === "number" ? val : fallback;
+      const prompt = workflowManager.buildPosePrompt(poseWorkflowPath, charFilename, poseFilename, seed);
+      console.log("[Anima] Pose prompt construído, nós:", Object.keys(prompt).length);
+      const entryOf = (id) => prompt[id];
+      const readNum = (id, input, fallback) => {
+        const v = entryOf(id)?.inputs?.[input];
+        return typeof v === "number" ? v : fallback;
       };
-      let width = 1024;
-      let height = 1024;
-      try {
-        const poseDataRaw = poseStudioNode.inputs?.pose_data;
-        const poseData = typeof poseDataRaw === "string" ? JSON.parse(poseDataRaw) : null;
-        const view = poseData?.export ?? poseData?.view;
-        if (typeof view?.view_width === "number") width = view.view_width;
-        if (typeof view?.view_height === "number") height = view.view_height;
-      } catch {
-      }
       const poseParams = {
         diffusionModel: "krea2",
         prompt: "",
         negativePrompt: "",
         seed,
-        steps: readNumInput("KSampler", "steps", 25),
-        cfg: readNumInput("KSampler", "cfg", 1),
-        width,
-        height,
+        steps: readNum("481", "steps", 25),
+        cfg: readNum("481", "cfg", 1),
+        width: readNum("479", "width", 1024),
+        height: readNum("479", "height", 1024),
         loras: [],
         modelName: "qwen-image-2.1"
       };
@@ -2756,7 +2791,7 @@ function setupIPC() {
       const savedImages = saveImagesToHistory(response.prompt_id, images, poseParams, filenamePrefix);
       return { promptId: response.prompt_id, images: savedImages };
     } finally {
-      removeTempFiles([charFilename], comfyInputDir);
+      removeTempFiles([charFilename, poseFilename], comfyInputDir);
     }
   });
   ipcMain.handle("comfyui:generateOutfit", async (event, rawParams) => {
@@ -3011,17 +3046,6 @@ function setupIPC() {
   });
   ipcMain.handle("app:getVersion", async () => {
     return app.getVersion();
-  });
-  ipcMain.handle("app:getPoseStudioWorkflow", async (event) => {
-    requireMainWindow(event);
-    const poseWorkflowFile = MODEL_PROFILES.krea2.poseWorkflowFile;
-    if (!poseWorkflowFile) return null;
-    const poseWorkflowPath = join(workflowsDir, poseWorkflowFile);
-    if (!existsSync(poseWorkflowPath)) {
-      console.warn("[Anima] Workflow de pose não encontrado:", poseWorkflowPath);
-      return null;
-    }
-    return JSON.parse(readFileSync(poseWorkflowPath, "utf-8"));
   });
   ipcMain.handle("file:readImage", async (event, filePath) => {
     requireMainWindow(event);

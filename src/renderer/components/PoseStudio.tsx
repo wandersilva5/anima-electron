@@ -1,66 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Play, Clock, RefreshCw } from 'lucide-react'
+import { Upload, Wand2, Trash2, Play, Clock } from 'lucide-react'
 import type { GenerationResult } from '@shared/types'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
-
-/** Elemento <webview> do Electron (tipado manualmente) */
-type WebViewElement = HTMLElement & {
-  executeJavaScript: <T = unknown>(code: string) => Promise<T>
-}
-
-/** Grafo serializado da sessão atual (sobrevive à recriação do webview) */
-let editorGraphCache: string | null = null
-
-/** Centraliza a câmera no nó VNCCS Pose Studio (id 488) dentro do ComfyUI */
-const ZOOM_TO_POSE_NODE = `(() => {
-  try {
-    const app = window.app
-    if (!app || !app.graph) return 'no-app'
-    const node = app.graph.getNodeById ? app.graph.getNodeById(488) : null
-    if (!node) return 'no-node'
-    for (const c of [app.canvas, app]) {
-      if (c && typeof c.centerOnNode === 'function') {
-        c.centerOnNode(node)
-        if (typeof c.setDirty === 'function') c.setDirty(true, true)
-        return 'centered'
-      }
-    }
-    const ds = app.canvas && app.canvas.ds
-    const el = app.canvas && app.canvas.canvas
-    if (ds && node.pos && el) {
-      ds.offset[0] = -node.pos[0] - (node.size ? node.size[0] : 210) * 0.5 + el.width * 0.5 / ds.scale
-      ds.offset[1] = -node.pos[1] - (node.size ? node.size[1] : 320) * 0.5 + el.height * 0.5 / ds.scale
-      return 'offset'
-    }
-    return 'no-canvas'
-  } catch (e) {
-    return 'error'
-  }
-})()`
-
-type PromptApi = NonNullable<import('@shared/types').PoseGenerationParams['promptApi']>
-
-/** Dimensões reais da tela de pose (view_width/view_height no pose_data) */
-function readPoseViewSize(promptApi?: PromptApi): { width: number; height: number } {
-  const fallback = { width: 1024, height: 1024 }
-  if (!promptApi) return fallback
-  try {
-    const node = Object.values(promptApi)
-      .find((n): n is { class_type?: string; inputs?: Record<string, unknown> } =>
-        !!n && typeof n === 'object' && (n as { class_type?: string }).class_type === 'VNCCS_PoseStudio')
-    const raw = node?.inputs?.pose_data
-    const poseData = typeof raw === 'string' ? JSON.parse(raw) : null
-    const width = Number(poseData?.export?.view_width)
-    const height = Number(poseData?.export?.view_height)
-    return {
-      width: Number.isFinite(width) && width > 0 ? width : fallback.width,
-      height: Number.isFinite(height) && height > 0 ? height : fallback.height
-    }
-  } catch {
-    return fallback
-  }
-}
+import { PoseMannequin3D, type PoseMannequinHandle } from './PoseMannequin3D'
 
 interface DropPanelProps {
   title: string
@@ -168,19 +111,8 @@ export function PoseStudio() {
   const [dragOverChar, setDragOverChar] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
-  const [comfyUrl, setComfyUrl] = useState<string | null>(null)
-  const [editorState, setEditorState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [editorError, setEditorError] = useState<string | null>(null)
-  const [editorEpoch, setEditorEpoch] = useState(0)
-
   const charInputRef = useRef<HTMLInputElement>(null)
-  const webviewRef = useRef<HTMLWebViewElement | null>(null)
-
-  useEffect(() => {
-    window.electronAPI.settings.get()
-      .then((s) => setComfyUrl(s.comfyUrl || 'http://127.0.0.1:8188'))
-      .catch(() => setComfyUrl('http://127.0.0.1:8188'))
-  }, [])
+  const mannequinRef = useRef<PoseMannequinHandle>(null)
 
   // Imagem escolhida no histórico (sidebar) vira a referência de personagem
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
@@ -220,145 +152,13 @@ export function PoseStudio() {
     if (charInputRef.current) charInputRef.current.value = ''
   }, [])
 
-  const execGuest = useCallback(async <T,>(code: string): Promise<T> => {
-    const wv = webviewRef.current as WebViewElement | null
-    if (!wv || typeof wv.executeJavaScript !== 'function') {
-      throw new Error('Editor do ComfyUI não está disponível')
-    }
-    return wv.executeJavaScript<T>(code)
-  }, [])
-
-  // Recarrega o webview preservando o grafo atual (pose montada)
-  const reloadEditor = useCallback(async () => {
-    try {
-      const wv = webviewRef.current as WebViewElement | null
-      if (wv) {
-        const json = await wv
-          .executeJavaScript<string>('JSON.stringify(window.app && window.app.graph ? window.app.graph.serialize() : null)')
-          .catch(() => null)
-        if (json && json !== 'null') editorGraphCache = json
-      }
-    } catch { /* webview já destruído */ }
-    setEditorState('loading')
-    setEditorError(null)
-    setEditorEpoch((e) => e + 1)
-  }, [])
-
-  // O ComfyUI voltou? Recria o editor que falhou ao carregar
-  const wasOnlineRef = useRef(false)
-  useEffect(() => {
-    const cameOnline = status.online && !wasOnlineRef.current
-    wasOnlineRef.current = status.online
-    if (cameOnline && editorState === 'error') void reloadEditor()
-  }, [status.online, editorState, reloadEditor])
-
-  // Monta o webview: carrega o workflow da pose e espera o app do ComfyUI
-  useEffect(() => {
-    if (!comfyUrl) return
-    const wv = webviewRef.current as WebViewElement | null
-    if (!wv) return
-
-    let cancelled = false
-    let initStarted = false
-
-    setEditorState('loading')
-    setEditorError(null)
-
-    const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-    const exec = async <T,>(code: string): Promise<T | null> => {
-      if (cancelled) return null
-      try {
-        return await wv.executeJavaScript<T>(code)
-      } catch {
-        return null
-      }
-    }
-
-    // Dispara uma única vez por montagem (dom-ready + did-finish-load)
-    const initEditor = async () => {
-      if (initStarted || cancelled) return
-      initStarted = true
-
-      // Espera o app do ComfyUI terminar de inicializar
-      let appReady = false
-      for (let i = 0; i < 100; i++) {
-        const ok = await exec<boolean>('!!(window.app && typeof window.app.loadGraphData === "function")')
-        if (ok) { appReady = true; break }
-        await delay(400)
-      }
-      if (!appReady) {
-        if (!cancelled) {
-          setEditorState('error')
-          setEditorError('O editor do ComfyUI não respondeu. Verifique se o servidor está rodando e recarregue.')
-        }
-        return
-      }
-
-      // Payloads: grafo salvo da sessão, depois o workflow do perfil
-      const payloads: string[] = []
-      if (editorGraphCache) payloads.push(editorGraphCache)
-      const workflow = await window.electronAPI.app.getPoseStudioWorkflow()
-      if (cancelled) return
-      if (workflow) payloads.push(JSON.stringify(workflow))
-      if (payloads.length === 0) {
-        setEditorState('error')
-        setEditorError('Workflow VNCCS-PoseStudio-QI21.json não encontrado na pasta workflows/.')
-        return
-      }
-
-      let loaded = false
-      for (const payload of payloads) {
-        if (cancelled) return
-        // O app pode sobrescrever o grafo durante o bootstrap — tenta 3x
-        for (let attempt = 0; attempt < 3 && !cancelled && !loaded; attempt++) {
-          await exec(`window.app.loadGraphData(${payload})`)
-          await delay(700)
-          const has = await exec<boolean>('!!(window.app.graph && window.app.graph.getNodeById && window.app.graph.getNodeById(488))')
-          loaded = !!has
-        }
-        if (loaded) break
-      }
-      if (cancelled) return
-      if (!loaded) {
-        setEditorState('error')
-        setEditorError('Não foi possível carregar o workflow de pose no editor. Recarregue o editor.')
-        return
-      }
-
-      await exec(ZOOM_TO_POSE_NODE)
-      if (!cancelled) setEditorState('ready')
-    }
-
-    const onDomReady = () => { void initEditor() }
-    const onDidFailLoad = (ev: Event) => {
-      const e = ev as unknown as { errorCode?: number; isMainFrame?: boolean }
-      if (e.isMainFrame === false || e.errorCode === -3 || cancelled) return
-      setEditorState('error')
-      setEditorError(`Não foi possível conectar ao ComfyUI (${e.errorCode ?? '?'}). Inicie o servidor e recarregue o editor.`)
-    }
-
-    wv.addEventListener('dom-ready', onDomReady)
-    wv.addEventListener('did-finish-load', onDomReady)
-    wv.addEventListener('did-fail-load', onDidFailLoad)
-
-    return () => {
-      cancelled = true
-      wv.removeEventListener('dom-ready', onDomReady)
-      wv.removeEventListener('did-finish-load', onDomReady)
-      wv.removeEventListener('did-fail-load', onDidFailLoad)
-      try {
-        void wv
-          .executeJavaScript<string>('JSON.stringify(window.app && window.app.graph ? window.app.graph.serialize() : null)')
-          .then((json) => { if (json && json !== 'null') editorGraphCache = json })
-          .catch(() => {})
-      } catch { /* webview já destruído */ }
-    }
-  }, [comfyUrl, editorEpoch])
-
   const handleGenerate = useCallback(async () => {
     if (!charSrc || generating || !status.online) return
-    if (editorState !== 'ready') {
-      setError('O editor de pose ainda não está pronto.')
+
+    const mannequin = mannequinRef.current
+    const poseImageBase64 = mannequin?.exportPNG()
+    if (!poseImageBase64) {
+      setError('Não foi possível capturar o mannequin — tente novamente.')
       return
     }
 
@@ -370,20 +170,10 @@ export function PoseStudio() {
     const stopProgress = startProgress()
 
     try {
-      // Serializa o grafo atual no formato da API do ComfyUI (no próprio webview)
-      const outputJson = await execGuest<string>(
-        'window.app.graphToPrompt().then(r => JSON.stringify(r.output))'
-      )
-      const promptApi = JSON.parse(outputJson) as PromptApi | null
-      if (!promptApi || Object.keys(promptApi).length === 0) {
-        throw new Error('O editor não retornou o workflow — recarregue o editor e tente novamente.')
-      }
-
-      const { width, height } = readPoseViewSize(promptApi)
       const seed = Math.floor(Math.random() * 2147483647)
       const result = await window.electronAPI.comfyui.generatePose({
         charImageBase64: charSrc,
-        promptApi,
+        poseImageBase64,
         seed,
         filenamePrefix: 'anima-pose'
       })
@@ -405,8 +195,8 @@ export function PoseStudio() {
             seed,
             steps: 25,
             cfg: 1,
-            width,
-            height,
+            width: 1024,
+            height: 1024,
             modelName: 'qwen-image-2.1',
             loras: [],
           },
@@ -420,75 +210,24 @@ export function PoseStudio() {
       stopProgress()
       setGenerating(false)
     }
-  }, [charSrc, generating, status.online, editorState, execGuest, startProgress, addToHistory])
+  }, [charSrc, generating, status.online, startProgress, addToHistory])
 
-  const generateDisabled = !charSrc || generating || !status.online || editorState !== 'ready'
+  const generateDisabled = !charSrc || generating || !status.online
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
       <main className="flex-1 flex flex-col bg-surface overflow-hidden min-w-0">
         <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-secondary shrink-0">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-            Editor de Pose — VNCCS Pose Studio · ComfyUI
+            Editor de Pose — Mannequin 3D (Three.js)
           </span>
-          <div className="flex items-center gap-2">
-            <span
-              className={`
-                px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide
-                ${editorState === 'ready'
-                  ? 'bg-success/20 text-success'
-                  : editorState === 'loading'
-                    ? 'bg-surface-tertiary text-text-muted'
-                    : 'bg-error/20 text-error'
-                }
-              `}
-            >
-              {editorState === 'ready' ? 'Pronto' : editorState === 'loading' ? 'Carregando…' : 'Erro'}
-            </span>
-            <button
-              onClick={() => void reloadEditor()}
-              className="p-1.5 rounded-lg hover:bg-surface-tertiary text-text-secondary hover:text-text-primary transition-colors"
-              title="Recarregar editor"
-            >
-              <RefreshCw size={12} />
-            </button>
-          </div>
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-success/20 text-success">
+            Local
+          </span>
         </div>
 
-        <div className="relative flex-1 min-h-0">
-          {comfyUrl && (
-            <webview
-              key={`pose-editor-${editorEpoch}`}
-              ref={webviewRef}
-              src={comfyUrl}
-              className="w-full h-full block"
-            />
-          )}
-
-          {(editorState === 'loading' || editorState === 'error' || !comfyUrl) && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface z-10 px-8 text-center">
-              {editorState === 'error' ? (
-                <>
-                  <Wand2 size={28} className="text-text-muted" />
-                  <span className="text-sm text-text-secondary max-w-md">{editorError}</span>
-                  <button
-                    onClick={() => void reloadEditor()}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors"
-                  >
-                    <RefreshCw size={14} />
-                    Recarregar editor
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="w-8 h-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-                  <span className="text-sm text-text-muted">
-                    {status.online ? 'Carregando o editor do ComfyUI…' : 'Aguardando o ComfyUI ficar online…'}
-                  </span>
-                </>
-              )}
-            </div>
-          )}
+        <div className="flex-1 min-h-0 p-3">
+          <PoseMannequin3D ref={mannequinRef} />
         </div>
       </main>
 
@@ -544,10 +283,9 @@ export function PoseStudio() {
 
             <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
               <p className="font-medium text-text-secondary">Como funciona:</p>
-              <p>1. Monte a pose no <strong className="text-text-primary">VNCCS Pose Studio</strong> (personagem 3D, câmera, poses e iluminação).</p>
+              <p>1. Monte a pose no <strong className="text-text-primary">mannequin 3D</strong> — clique nos ossos e ajuste os ângulos.</p>
               <p>2. Escolha a <strong className="text-text-primary">personagem</strong> à direita — identidade, rosto e roupa a preservar.</p>
-              <p>3. Ao gerar, o <strong className="text-text-primary">Qwen-Image 2.1 + LoRA PoseStudio</strong> aplica a pose capturada na personagem.</p>
-              <p className="pt-1 text-[11px]">Mantenha este editor aberto durante a geração — a captura da pose é sincronizada pelo navegador.</p>
+              <p>3. Ao gerar, o mannequin é renderizado como imagem de pose e o <strong className="text-text-primary">Qwen-Image 2.1 + LoRA PoseStudio</strong> aplica a pose na personagem.</p>
             </div>
           </div>
 
