@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
-import { Upload, Wand2, Trash2, Paintbrush, X, ArrowLeftRight, Clock, ImagePlus } from 'lucide-react'
+import { Upload, Wand2, Trash2, Paintbrush, X, ArrowLeftRight, Clock, ImagePlus, Download } from 'lucide-react'
 import type { DiffusionModelId, GenerationResult, ImproveEditMode } from '@shared/types'
 import { MODEL_PROFILES } from '@shared/modelProfiles'
 import { BrushCanvas, type BrushCanvasHandle } from './BrushCanvas'
@@ -40,6 +40,7 @@ export function ImageImprove() {
   const [prompt, setPrompt] = useState(savedSettings.prompt ?? '')
   const [denoise, setDenoise] = useState(savedSettings.denoise ?? 0.55)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
+  const [originalFileName, setOriginalFileName] = useState<string | null>(null)
   const [refSrc, setRefSrc] = useState<string | null>(null)
   const [resultSrc, setResultSrc] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -93,6 +94,7 @@ export function ImageImprove() {
     requestHistoryPick(null)
     const apply = (src: string) => {
       setOriginalSrc(src)
+      setOriginalFileName(picked.filename ?? null)
       setResultSrc(null)
       setError(null)
       setNotice(null)
@@ -113,6 +115,7 @@ export function ImageImprove() {
     const reader = new FileReader()
     reader.onload = (e) => {
       setOriginalSrc(e.target?.result as string)
+      setOriginalFileName(file.name)
       setResultSrc(null)
       setError(null)
       setNotice(null)
@@ -138,6 +141,7 @@ export function ImageImprove() {
 
   const clearImage = useCallback(() => {
     setOriginalSrc(null)
+    setOriginalFileName(null)
     setResultSrc(null)
     setError(null)
     setNotice(null)
@@ -160,6 +164,16 @@ export function ImageImprove() {
       return prev.trim() ? `${prev.trim()}\n${text}` : text
     })
   }, [])
+
+  // Baixa o resultado em PNG (qualidade total) usando o nome base da imagem original
+  const handleDownload = useCallback(() => {
+    if (!resultSrc) return
+    const baseName = originalFileName ? originalFileName.replace(/\.[^.]+$/, '') : 'anima-improve'
+    const link = document.createElement('a')
+    link.href = resultSrc
+    link.download = `${baseName}.png`
+    link.click()
+  }, [resultSrc, originalFileName])
 
   useEffect(() => {
     if (!originalSrc) return
@@ -354,6 +368,16 @@ export function ImageImprove() {
                 <Upload size={14} />
                 Trocar
               </button>
+              {resultSrc && (
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors"
+                  title={originalFileName ? `Baixar como ${originalFileName.replace(/\.[^.]+$/, '')}.png` : 'Baixar imagem melhorada'}
+                >
+                  <Download size={14} />
+                  Baixar PNG
+                </button>
+              )}
 
               <input
                 ref={fileInputRef}
