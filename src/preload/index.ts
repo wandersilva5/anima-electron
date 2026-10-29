@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generate: (params: unknown) => ipcRenderer.invoke('comfyui:generate', params),
     generateImprove: (params: unknown) => ipcRenderer.invoke('comfyui:generateImprove', params),
     generatePose: (params: unknown) => ipcRenderer.invoke('comfyui:generatePose', params),
+    generatePoseControlNet: (params: unknown) => ipcRenderer.invoke('comfyui:generatePoseControlNet', params),
     generateOutfit: (params: unknown) => ipcRenderer.invoke('comfyui:generateOutfit', params),
     captionImage: (params: { imageBase64: string; mode?: 'descriptive' | 'tags' }) => ipcRenderer.invoke('comfyui:captionImage', params),
     clearCache: () => ipcRenderer.invoke('comfyui:clearCache'),

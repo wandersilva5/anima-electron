@@ -669,6 +669,80 @@ function setupIPC(): void {
     }
   })
 
+  ipcMain.handle('comfyui:generatePoseControlNet', async (event, rawParams) => {
+    requireMainWindow(event)
+
+    const p = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>
+    const poseImageBase64 = typeof p.poseImageBase64 === 'string' ? p.poseImageBase64 : null
+    const prompt = typeof p.prompt === 'string' ? p.prompt.trim() : ''
+    const poseSource = p.poseSource === 'skeleton' ? 'skeleton' : 'photo'
+    const seed = typeof p.seed === 'number' ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647)
+
+    if (!poseImageBase64) throw new Error('Imagem de pose não fornecida')
+    if (!prompt) throw new Error('Descreva o personagem no prompt antes de gerar')
+
+    const cnWorkflowFile = MODEL_PROFILES.krea2.poseCNWorkflowFile
+    if (!cnWorkflowFile) throw new Error('Perfil krea2 não define poseCNWorkflowFile')
+    const cnWorkflowPath = join(workflowsDir, cnWorkflowFile)
+    if (!existsSync(cnWorkflowPath)) {
+      throw new Error(`Workflow de pose ControlNet não encontrado: ${cnWorkflowPath}`)
+    }
+
+    const settings = settingsManager.get()
+    const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
+    const baseUrl = comfyClient.getBaseUrl()
+
+    const m = poseImageBase64.match(/^data:image\/(\w+);base64,/)
+    const ext = m ? (m[1] === 'jpeg' ? 'jpg' : m[1]) : 'png'
+    const poseFilename = `anima-pose-cn-${Date.now()}.${ext}`
+
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl)
+    console.log('[Anima] PoseControlNet: pose=%s (source=%s), seed=%d', poseFilename, poseSource, seed)
+
+    try {
+      const promptJson = workflowManager.buildPoseControlNetPrompt(cnWorkflowPath, {
+        poseFilename,
+        prompt,
+        seed,
+        poseSource
+      })
+      console.log('[Anima] PoseControlNet prompt construído, nós:', Object.keys(promptJson).length)
+
+      const response = await comfyClient.sendPrompt(promptJson)
+      console.log('[Anima] PoseControlNet prompt enviado, ID:', response.prompt_id)
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`)
+      }
+
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send('comfyui:progress', { current, max, promptId: response.prompt_id })
+        },
+        900000
+      )
+      console.log(`[Anima] PoseControlNet concluída, ${images.length} imagem(ns)`)
+
+      const cnParams = {
+        diffusionModel: 'krea2' as DiffusionModelId,
+        prompt,
+        negativePrompt: '',
+        seed,
+        steps: 10,
+        cfg: 1,
+        width: 1024,
+        height: 1024,
+        loras: [],
+        modelName: 'krea2_turbo_fp8_scaled',
+        editMode: undefined
+      }
+      const savedImages = saveImagesToHistory(response.prompt_id, images, cnParams as unknown as Record<string, unknown>, 'anima-pose')
+      return { promptId: response.prompt_id, images: savedImages }
+    } finally {
+      removeTempFiles([poseFilename], comfyInputDir)
+    }
+  })
+
   ipcMain.handle('comfyui:generateOutfit', async (event, rawParams) => {
     requireMainWindow(event)
 

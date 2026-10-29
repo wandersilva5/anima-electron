@@ -1075,6 +1075,85 @@ export class WorkflowManager {
   }
 
   /**
+   * Constrói o prompt da API para o fluxo de pose ControlNet
+   * (Krea2 Turbo + krea2_turbo_openpose_controlnet).
+   *
+   * O template `Krea2-Pose-ControlNet.json` (baseado no krea2_controlnet_pose
+   * oficial do LoRA) tem widgets que a conversão genérica não mapeia porque
+   * o frontend serializa `prompt`, `kv_cache`, `filename_prefix` e as opções
+   * do DWPose como widgets puros (não aparecem no array `inputs`), e alguns
+   * como inputs com `shape: 7`. Todos são injetados explicitamente aqui —
+   * sem isso o ComfyUI valida com "Required input is missing" ou roda com
+   * `batch_size` errado (width/height ligados ao GetImageSize deslocam o
+   * mapeamento posicional e jogam 1024 em batch_size).
+   *
+   * Grafo (ids fixos do template):
+   *   photo:    25 LoadImage → 38 DWPreprocessor → 28 FluxKontextImageScale
+   *             → 34/35 TextEncode .image1 (condicionante de pose) + 36 GetImageSize → 6 latent
+   *   skeleton: 25 → 28 direto (DWPose pulado; 38 removido)
+   *   texto:    34 prompt (+) / 35 prompt vazio (−) → 21/24 MultiRef → 7 KSampler
+   */
+  buildPoseControlNetPrompt(
+    workflowPath: string,
+    opts: {
+      poseFilename: string
+      prompt: string
+      seed: number
+      poseSource: 'photo' | 'skeleton'
+    }
+  ): Record<string, unknown> {
+    const raw = readFileSync(workflowPath, 'utf-8')
+    const workflow: WorkflowJSON = JSON.parse(raw)
+    const result = this.convertUiToApi(workflow)
+
+    const fix = (id: string, fn: (inputs: Record<string, unknown>) => void): void => {
+      const entry = result[id] as { inputs?: Record<string, unknown> } | undefined
+      if (entry?.inputs) fn(entry.inputs)
+    }
+
+    // Imagem de pose (arquivo já enviado ao input/ do ComfyUI)
+    fix('25', (i) => { i.image = opts.poseFilename })
+
+    // prompt é widget puro do TextEncodeKrea2OstrisEdit (nunca entra em inputs)
+    fix('34', (i) => { i.prompt = opts.prompt })
+    fix('35', (i) => { i.prompt = '' })
+
+    // kv_cache: widget booleano fora do array inputs
+    fix('33', (i) => { i.kv_cache = true })
+
+    // width/height vêm do GetImageSize (links); o mapeamento posicional
+    // coloca o primeiro widget (1024) em batch_size — corrige para 1
+    fix('6', (i) => { i.batch_size = 1 })
+
+    // filename_prefix: widget puro do SaveImage
+    fix('9', (i) => { if (!i.filename_prefix) i.filename_prefix = 'anima-pose' })
+
+    // seed do KSampler (sampler/scheduler/steps/cfg já mapeiam corretamente)
+    fix('7', (i) => { i.seed = opts.seed })
+
+    if (opts.poseSource === 'photo') {
+      // Opções do DWPose também são widgets shape:7 — injeta com os defaults
+      // do nó (mesmos valores do template oficial).
+      fix('38', (i) => {
+        i.detect_hand = 'enable'
+        i.detect_body = 'enable'
+        i.detect_face = 'enable'
+        i.resolution = 512
+        i.bbox_detector = 'yolox_l.onnx'
+        i.pose_estimator = 'dw-ll_ucoco_384_bs5.torchscript.pt'
+        i.scale_stick_for_xinsr_cn = 'disable'
+      })
+    } else {
+      // Imagem já é mapa OpenPose/DWPose: pula a extração — a pose vai
+      // direto do LoadImage para a escala do Flux Kontext.
+      delete result['38']
+      fix('28', (i) => { i.image = ['25', 0] })
+    }
+
+    return result
+  }
+
+  /**
    * Conversão genérica UI → API (links + widgets posicionais).
    * Compartilhada pelos fluxos de fora da aba Gerar (Pose, Outfit).
    */

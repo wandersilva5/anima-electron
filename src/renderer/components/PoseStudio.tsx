@@ -102,19 +102,28 @@ function DropPanel({ title, hint, src, dragOver, onDragOver, onFile, onClear, in
 export function PoseStudio() {
   const { status, addToHistory } = useSessionStore()
 
+  // 'mannequin': fluxo original (3D + personagem + LoRA VNCCS/Qwen)
+  // 'image': ControlNet OpenPose — só a imagem de pose + prompt (Krea2)
+  const [poseMode, setPoseMode] = useState<'mannequin' | 'image'>('mannequin')
   const [charSrc, setCharSrc] = useState<string | null>(null)
+  const [poseSrc, setPoseSrc] = useState<string | null>(null)
+  const [posePrompt, setPosePrompt] = useState('')
+  const [poseSource, setPoseSource] = useState<'photo' | 'skeleton'>('photo')
   const [resultSrc, setResultSrc] = useState<string | null>(null)
 
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [dragOverChar, setDragOverChar] = useState(false)
+  const [dragOverPose, setDragOverPose] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
   const charInputRef = useRef<HTMLInputElement>(null)
+  const poseInputRef = useRef<HTMLInputElement>(null)
   const mannequinRef = useRef<PoseMannequinHandle>(null)
 
-  // Imagem escolhida no histórico (sidebar) vira a referência de personagem
+  // Imagem escolhida no histórico (sidebar): personagem no modo mannequin,
+  // imagem de pose no modo ControlNet
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
   const requestHistoryPick = useSessionStore((s) => s.requestHistoryPick)
   useEffect(() => {
@@ -122,9 +131,10 @@ export function PoseStudio() {
     const picked = pendingPick
     requestHistoryPick(null)
     const apply = (src: string) => {
-      setCharSrc(src)
       setResultSrc(null)
       setError(null)
+      if (poseMode === 'image') setPoseSrc(src)
+      else setCharSrc(src)
     }
     if (picked.imageBase64) {
       apply(picked.imageBase64)
@@ -133,7 +143,7 @@ export function PoseStudio() {
         if (data) apply(data)
       })
     }
-  }, [pendingPick, requestHistoryPick])
+  }, [pendingPick, requestHistoryPick, poseMode])
 
   const handleCharFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -146,14 +156,87 @@ export function PoseStudio() {
     reader.readAsDataURL(file)
   }, [])
 
+  const handlePoseFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      setPoseSrc(e.target?.result as string)
+      setResultSrc(null)
+      setError(null)
+    }
+    reader.readAsDataURL(file)
+  }, [])
+
   const clearChar = useCallback(() => {
     setCharSrc(null)
     setResultSrc(null)
+    setError(null)
     if (charInputRef.current) charInputRef.current.value = ''
   }, [])
 
+  const clearPose = useCallback(() => {
+    setPoseSrc(null)
+    setResultSrc(null)
+    setError(null)
+    if (poseInputRef.current) poseInputRef.current.value = ''
+  }, [])
+
   const handleGenerate = useCallback(async () => {
-    if (!charSrc || generating || !status.online) return
+    if (generating || !status.online) return
+
+    if (poseMode === 'image') {
+      if (!poseSrc || !posePrompt.trim()) return
+      setGenerating(true)
+      setError(null)
+      setWarning(null)
+      setResultSrc(null)
+      const stopProgress = startProgress()
+      try {
+        const seed = Math.floor(Math.random() * 2147483647)
+        const result = await window.electronAPI.comfyui.generatePoseControlNet({
+          poseImageBase64: poseSrc,
+          prompt: posePrompt.trim(),
+          poseSource,
+          seed,
+          filenamePrefix: 'anima-pose'
+        })
+
+        const image = result.images?.[0]
+        if (image) {
+          if (result.warning) setWarning(result.warning)
+          const src = `data:image/png;base64,${image.data}`
+          setResultSrc(src)
+          const entry: GenerationResult = {
+            id: result.promptId,
+            imageBase64: src,
+            filePath: image.filePath,
+            filename: image.filename,
+            params: {
+              diffusionModel: 'krea2',
+              prompt: posePrompt.trim(),
+              negativePrompt: '',
+              seed,
+              steps: 10,
+              cfg: 1,
+              width: 1024,
+              height: 1024,
+              modelName: 'krea2_turbo_fp8_scaled',
+              loras: [],
+            },
+            timestamp: Date.now()
+          }
+          addToHistory(entry)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Erro ao gerar com pose')
+      } finally {
+        stopProgress()
+        setGenerating(false)
+      }
+      return
+    }
+
+    if (!charSrc) return
 
     const mannequin = mannequinRef.current
     const poseImageBase64 = mannequin?.exportPNG()
@@ -210,40 +293,118 @@ export function PoseStudio() {
       stopProgress()
       setGenerating(false)
     }
-  }, [charSrc, generating, status.online, startProgress, addToHistory])
+  }, [charSrc, poseSrc, posePrompt, poseSource, poseMode, generating, status.online, startProgress, addToHistory])
 
-  const generateDisabled = !charSrc || generating || !status.online
+  const generateDisabled = poseMode === 'image'
+    ? (!poseSrc || !posePrompt.trim() || generating || !status.online)
+    : (!charSrc || generating || !status.online)
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
       <main className="flex-1 flex flex-col bg-surface overflow-hidden min-w-0">
         <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-secondary shrink-0">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-            Editor de Pose — Mannequin 3D (Three.js)
-          </span>
+          <div className="flex rounded-lg bg-surface border border-border p-0.5 gap-0.5">
+            <button
+              onClick={() => setPoseMode('mannequin')}
+              disabled={generating}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                poseMode === 'mannequin'
+                  ? 'bg-accent text-white'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Mannequin 3D
+            </button>
+            <button
+              onClick={() => setPoseMode('image')}
+              disabled={generating}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                poseMode === 'image'
+                  ? 'bg-accent text-white'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Imagem de pose
+            </button>
+          </div>
           <span className="px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-success/20 text-success">
-            Local
+            {poseMode === 'image' ? 'ControlNet' : 'Local'}
           </span>
         </div>
 
-        <div className="flex-1 min-h-0 p-3">
-          <PoseMannequin3D ref={mannequinRef} />
-        </div>
+        {poseMode === 'mannequin' ? (
+          <div className="flex-1 min-h-0 p-3">
+            <PoseMannequin3D ref={mannequinRef} />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 p-6 flex items-start justify-center overflow-y-auto">
+            <div className="w-full max-w-sm">
+              <DropPanel
+                title="Imagem de pose (manequim 2D)"
+                hint="Arraste ou selecione a imagem com a pose desejada"
+                src={poseSrc}
+                dragOver={dragOverPose}
+                onDragOver={setDragOverPose}
+                onFile={handlePoseFile}
+                onClear={clearPose}
+                inputRef={poseInputRef}
+              />
+              <p className="mt-3 text-[11px] text-text-muted leading-snug">
+                Aceita foto, manequim 2D ou esqueleto OpenPose. O <strong className="text-text-secondary">prompt</strong>{' '}
+                define o personagem — identidade, roupa e cenário vêm do texto, a postura vem da imagem.
+              </p>
+            </div>
+          </div>
+        )}
       </main>
 
       <aside className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-border bg-surface-secondary overflow-y-auto shrink-0 max-h-[40vh] lg:max-h-none">
         <div className="flex flex-col h-full">
           <div className="p-4 space-y-4">
-            <DropPanel
-              title="Personagem (identidade)"
-              hint="Arraste ou selecione a imagem da personagem"
-              src={charSrc}
-              dragOver={dragOverChar}
-              onDragOver={setDragOverChar}
-              onFile={handleCharFile}
-              onClear={clearChar}
-              inputRef={charInputRef}
-            />
+            {poseMode === 'image' ? (
+              <>
+                <div className="flex flex-col gap-2 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+                    Personagem (prompt)
+                  </span>
+                  <textarea
+                    value={posePrompt}
+                    onChange={(e) => setPosePrompt(e.target.value)}
+                    placeholder="Descreva o personagem a gerar na pose. Ex: 1girl, long silver hair, blue eyes, black armor dress, standing in a ruined cathedral, detailed lighting"
+                    rows={5}
+                    className="w-full bg-surface rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:ring-1 focus:ring-accent transition-colors"
+                    disabled={generating || !poseSrc}
+                  />
+                  <div className="flex items-center gap-1.5">
+                    {(['photo', 'skeleton'] as const).map((src) => (
+                      <button
+                        key={src}
+                        onClick={() => setPoseSource(src)}
+                        disabled={generating}
+                        className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-medium border transition-colors ${
+                          poseSource === src
+                            ? 'border-accent bg-accent/5 text-accent'
+                            : 'border-border bg-surface text-text-secondary hover:border-text-muted'
+                        }`}
+                      >
+                        {src === 'photo' ? 'Foto / manequim (DWPose)' : 'Esqueleto OpenPose'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <DropPanel
+                title="Personagem (identidade)"
+                hint="Arraste ou selecione a imagem da personagem"
+                src={charSrc}
+                dragOver={dragOverChar}
+                onDragOver={setDragOverChar}
+                onFile={handleCharFile}
+                onClear={clearChar}
+                inputRef={charInputRef}
+              />
+            )}
 
             <div className="flex flex-col gap-2 min-w-0">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
@@ -261,7 +422,11 @@ export function PoseStudio() {
                   <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
                     <Wand2 size={28} className="text-text-muted" />
                     <span className="text-sm text-text-muted">
-                      {generating ? 'Gerando...' : 'A personagem com a pose aparecerá aqui'}
+                      {generating
+                        ? 'Gerando...'
+                        : poseMode === 'image'
+                          ? 'A personagem da pose aparecerá aqui'
+                          : 'A personagem com a pose aparecerá aqui'}
                     </span>
                   </div>
                 )}
@@ -281,12 +446,21 @@ export function PoseStudio() {
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
-              <p className="font-medium text-text-secondary">Como funciona:</p>
-              <p>1. Monte a pose no <strong className="text-text-primary">mannequin 3D</strong> — clique nos ossos e ajuste os ângulos.</p>
-              <p>2. Escolha a <strong className="text-text-primary">personagem</strong> à direita — identidade, rosto e roupa a preservar.</p>
-              <p>3. Ao gerar, o mannequin é renderizado como imagem de pose e o <strong className="text-text-primary">Qwen-Image 2.1 + LoRA PoseStudio</strong> aplica a pose na personagem.</p>
-            </div>
+            {poseMode === 'image' ? (
+              <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
+                <p className="font-medium text-text-secondary">ControlNet OpenPose (Krea2):</p>
+                <p>1. Escolha a <strong className="text-text-primary">imagem de pose</strong> — foto, manequim 2D ou esqueleto OpenPose.</p>
+                <p>2. Selecione a origem: <strong className="text-text-primary">Foto/manequim</strong> extrai o esqueleto com DWPose; <strong className="text-text-primary">Esqueleto OpenPose</strong> usa a imagem direto.</p>
+                <p>3. Descreva o <strong className="text-text-primary">personagem</strong> no prompt — o ControlNet segue a pose e o texto define identidade, roupa e cenário.</p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
+                <p className="font-medium text-text-secondary">Como funciona:</p>
+                <p>1. Monte a pose no <strong className="text-text-primary">mannequin 3D</strong> — clique nos ossos e ajuste os ângulos.</p>
+                <p>2. Escolha a <strong className="text-text-primary">personagem</strong> à direita — identidade, rosto e roupa a preservar.</p>
+                <p>3. Ao gerar, o mannequin é renderizado como imagem de pose e o <strong className="text-text-primary">Qwen-Image 2.1 + LoRA PoseStudio</strong> aplica a pose na personagem.</p>
+              </div>
+            )}
           </div>
 
           <div className="mt-auto p-4 border-t border-border space-y-3">
@@ -353,6 +527,11 @@ export function PoseStudio() {
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Gerando...
+                </>
+              ) : poseMode === 'image' ? (
+                <>
+                  <Play size={16} />
+                  Gerar com ControlNet
                 </>
               ) : (
                 <>

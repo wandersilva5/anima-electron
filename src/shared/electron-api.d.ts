@@ -24,6 +24,7 @@ interface ElectronAPI {
     generate: (params: unknown) => Promise<GenerateResult>
     generateImprove: (params: unknown) => Promise<GenerateResult>
     generatePose: (params: import('./types').PoseGenerationParams) => Promise<GenerateResult>
+    generatePoseControlNet: (params: import('./types').PoseControlNetParams) => Promise<GenerateResult>
     generateOutfit: (params: import('./types').OutfitGenerationParams) => Promise<GenerateResult>
     captionImage: (params: { imageBase64: string; mode?: 'descriptive' | 'tags' }) => Promise<{ text: string }>
     clearCache: () => Promise<{ success: boolean; message: string }>

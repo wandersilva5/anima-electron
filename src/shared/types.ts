@@ -22,6 +22,8 @@ export interface ModelProfile {
   outfitWorkflowFile?: string
   /** Workflow usado pela aba MELHORIA (edição img2img com imagem de referência opcional) */
   improveWorkflowFile?: string
+  /** Workflow de pose ControlNet (Krea2 + OpenPose LoRA) da aba POSE — modo "Imagem de pose" */
+  poseCNWorkflowFile?: string
   loraFolder: string
   hasNegativePrompt: boolean
   hasLoraClipStrength: boolean
@@ -46,6 +48,26 @@ export interface PoseGenerationParams {
   seed?: number
   filenamePrefix?: string
   modelName?: string           // Checkpoint opcional
+}
+
+/**
+ * Parâmetros para geração de pose via ControlNet OpenPose (Krea2 Turbo +
+ * krea2_turbo_openpose_controlnet). O prompt define o personagem; a imagem
+ * de pose (manequim 2D/foto/esqueleto OpenPose) define a postura.
+ */
+export interface PoseControlNetParams {
+  /** Imagem de pose (manequim 2D, foto ou esqueleto OpenPose) como data URL */
+  poseImageBase64: string
+  /** Prompt que descreve o personagem a ser gerado na pose */
+  prompt: string
+  /**
+   * Origem da imagem de pose:
+   * - 'photo': foto/manequim → extrai o esqueleto com DWPose antes de condicionar
+   * - 'skeleton': a imagem já é um mapa OpenPose → entra direto no encoder
+   */
+  poseSource: 'photo' | 'skeleton'
+  seed?: number
+  filenamePrefix?: string
 }
 
 /** Parâmetros para transferência de roupa via workflow dedicado (Krea2-Outfit) */

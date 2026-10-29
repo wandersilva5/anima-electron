@@ -1048,6 +1048,7 @@ const MODEL_PROFILES = {
     description: "Krea2 Turbo — geração rápida, sem prompt negativo",
     workflowFile: "Krea2 - Simples.json",
     poseWorkflowFile: "VNCCS-PoseStudio-QI21.json",
+    poseCNWorkflowFile: "Krea2-Pose-ControlNet.json",
     outfitWorkflowFile: "Krea2-Outfit.json",
     loraFolder: "Krea2",
     hasNegativePrompt: false,
@@ -1949,6 +1950,72 @@ class WorkflowManager {
     return prompt;
   }
   /**
+   * Constrói o prompt da API para o fluxo de pose ControlNet
+   * (Krea2 Turbo + krea2_turbo_openpose_controlnet).
+   *
+   * O template `Krea2-Pose-ControlNet.json` (baseado no krea2_controlnet_pose
+   * oficial do LoRA) tem widgets que a conversão genérica não mapeia porque
+   * o frontend serializa `prompt`, `kv_cache`, `filename_prefix` e as opções
+   * do DWPose como widgets puros (não aparecem no array `inputs`), e alguns
+   * como inputs com `shape: 7`. Todos são injetados explicitamente aqui —
+   * sem isso o ComfyUI valida com "Required input is missing" ou roda com
+   * `batch_size` errado (width/height ligados ao GetImageSize deslocam o
+   * mapeamento posicional e jogam 1024 em batch_size).
+   *
+   * Grafo (ids fixos do template):
+   *   photo:    25 LoadImage → 38 DWPreprocessor → 28 FluxKontextImageScale
+   *             → 34/35 TextEncode .image1 (condicionante de pose) + 36 GetImageSize → 6 latent
+   *   skeleton: 25 → 28 direto (DWPose pulado; 38 removido)
+   *   texto:    34 prompt (+) / 35 prompt vazio (−) → 21/24 MultiRef → 7 KSampler
+   */
+  buildPoseControlNetPrompt(workflowPath, opts) {
+    const raw = readFileSync(workflowPath, "utf-8");
+    const workflow = JSON.parse(raw);
+    const result = this.convertUiToApi(workflow);
+    const fix = (id, fn) => {
+      const entry = result[id];
+      if (entry?.inputs) fn(entry.inputs);
+    };
+    fix("25", (i) => {
+      i.image = opts.poseFilename;
+    });
+    fix("34", (i) => {
+      i.prompt = opts.prompt;
+    });
+    fix("35", (i) => {
+      i.prompt = "";
+    });
+    fix("33", (i) => {
+      i.kv_cache = true;
+    });
+    fix("6", (i) => {
+      i.batch_size = 1;
+    });
+    fix("9", (i) => {
+      if (!i.filename_prefix) i.filename_prefix = "anima-pose";
+    });
+    fix("7", (i) => {
+      i.seed = opts.seed;
+    });
+    if (opts.poseSource === "photo") {
+      fix("38", (i) => {
+        i.detect_hand = "enable";
+        i.detect_body = "enable";
+        i.detect_face = "enable";
+        i.resolution = 512;
+        i.bbox_detector = "yolox_l.onnx";
+        i.pose_estimator = "dw-ll_ucoco_384_bs5.torchscript.pt";
+        i.scale_stick_for_xinsr_cn = "disable";
+      });
+    } else {
+      delete result["38"];
+      fix("28", (i) => {
+        i.image = ["25", 0];
+      });
+    }
+    return result;
+  }
+  /**
    * Conversão genérica UI → API (links + widgets posicionais).
    * Compartilhada pelos fluxos de fora da aba Gerar (Pose, Outfit).
    */
@@ -2792,6 +2859,69 @@ function setupIPC() {
       return { promptId: response.prompt_id, images: savedImages };
     } finally {
       removeTempFiles([charFilename, poseFilename], comfyInputDir);
+    }
+  });
+  ipcMain.handle("comfyui:generatePoseControlNet", async (event, rawParams) => {
+    requireMainWindow(event);
+    const p = rawParams && typeof rawParams === "object" ? rawParams : {};
+    const poseImageBase64 = typeof p.poseImageBase64 === "string" ? p.poseImageBase64 : null;
+    const prompt = typeof p.prompt === "string" ? p.prompt.trim() : "";
+    const poseSource = p.poseSource === "skeleton" ? "skeleton" : "photo";
+    const seed = typeof p.seed === "number" ? Math.floor(p.seed) : Math.floor(Math.random() * 2147483647);
+    if (!poseImageBase64) throw new Error("Imagem de pose não fornecida");
+    if (!prompt) throw new Error("Descreva o personagem no prompt antes de gerar");
+    const cnWorkflowFile = MODEL_PROFILES.krea2.poseCNWorkflowFile;
+    if (!cnWorkflowFile) throw new Error("Perfil krea2 não define poseCNWorkflowFile");
+    const cnWorkflowPath = join(workflowsDir, cnWorkflowFile);
+    if (!existsSync(cnWorkflowPath)) {
+      throw new Error(`Workflow de pose ControlNet não encontrado: ${cnWorkflowPath}`);
+    }
+    const settings2 = settingsManager.get();
+    const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
+    const baseUrl = comfyClient.getBaseUrl();
+    const m = poseImageBase64.match(/^data:image\/(\w+);base64,/);
+    const ext = m ? m[1] === "jpeg" ? "jpg" : m[1] : "png";
+    const poseFilename = `anima-pose-cn-${Date.now()}.${ext}`;
+    await uploadImageToComfyUI(poseImageBase64, poseFilename, comfyInputDir, baseUrl);
+    console.log("[Anima] PoseControlNet: pose=%s (source=%s), seed=%d", poseFilename, poseSource, seed);
+    try {
+      const promptJson = workflowManager.buildPoseControlNetPrompt(cnWorkflowPath, {
+        poseFilename,
+        prompt,
+        seed,
+        poseSource
+      });
+      console.log("[Anima] PoseControlNet prompt construído, nós:", Object.keys(promptJson).length);
+      const response = await comfyClient.sendPrompt(promptJson);
+      console.log("[Anima] PoseControlNet prompt enviado, ID:", response.prompt_id);
+      if (Object.keys(response.node_errors ?? {}).length > 0) {
+        throw new Error(`Erro nos nós: ${JSON.stringify(response.node_errors)}`);
+      }
+      const images = await comfyClient.waitForResult(
+        response.prompt_id,
+        (current, max) => {
+          mainWindow?.webContents.send("comfyui:progress", { current, max, promptId: response.prompt_id });
+        },
+        9e5
+      );
+      console.log(`[Anima] PoseControlNet concluída, ${images.length} imagem(ns)`);
+      const cnParams = {
+        diffusionModel: "krea2",
+        prompt,
+        negativePrompt: "",
+        seed,
+        steps: 10,
+        cfg: 1,
+        width: 1024,
+        height: 1024,
+        loras: [],
+        modelName: "krea2_turbo_fp8_scaled",
+        editMode: void 0
+      };
+      const savedImages = saveImagesToHistory(response.prompt_id, images, cnParams, "anima-pose");
+      return { promptId: response.prompt_id, images: savedImages };
+    } finally {
+      removeTempFiles([poseFilename], comfyInputDir);
     }
   });
   ipcMain.handle("comfyui:generateOutfit", async (event, rawParams) => {
