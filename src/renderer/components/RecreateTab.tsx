@@ -401,6 +401,7 @@ export function RecreateTab() {
               onLoraStrengthChange={setLoraStrength}
               onReorderLoras={reorderLoras}
               refreshLorasFn={refreshLoras}
+              compactLoraArea
             />
 
             {/* Caption textarea */}

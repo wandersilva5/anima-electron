@@ -20,6 +20,7 @@ interface ModelSidebarProps {
   loras: LoraInfo[]
   refreshLorasFn: () => Promise<void>
   hideDiffusionSelector?: boolean
+  compactLoraArea?: boolean
 }
 
 export function ModelSidebar({
@@ -35,7 +36,8 @@ export function ModelSidebar({
   onReorderLoras,
   loras,
   refreshLorasFn,
-  hideDiffusionSelector
+  hideDiffusionSelector,
+  compactLoraArea
 }: ModelSidebarProps) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [lorasOpen, setLorasOpen] = useState(false)
@@ -237,61 +239,66 @@ export function ModelSidebar({
       {/* Modelo de Difusão */}
       {showDiffusionSelector && (
         <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Modelo de Difusão</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Modelo de Difusão</h3>
+            <button
+              type="button"
+              onClick={() => setModelsOpen((o) => !o)}
+              className="p-1 rounded hover:bg-surface-tertiary transition-colors"
+              aria-label={modelsOpen ? 'Fechar modelos' : 'Abrir modelos'}
+            >
+              {modelsOpen ? <ChevronUp size={14} className="text-text-secondary" /> : <ChevronDown size={14} className="text-text-secondary" />}
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => setModelsOpen((o) => !o)}
-            className="p-1 rounded hover:bg-surface-tertiary transition-colors"
-            aria-label={modelsOpen ? 'Fechar modelos' : 'Abrir modelos'}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border bg-surface text-left transition-colors hover:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            {modelsOpen ? <ChevronUp size={14} className="text-text-secondary" /> : <ChevronDown size={14} className="text-text-secondary" />}
+            <span className="text-sm font-medium text-text-primary truncate">{displayModelName(modelName)}</span>
+            {modelsOpen ? <ChevronUp size={16} className="text-text-secondary shrink-0" /> : <ChevronDown size={16} className="text-text-secondary shrink-0" />}
           </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setModelsOpen((o) => !o)}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border bg-surface text-left transition-colors hover:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent"
-        >
-          <span className="text-sm font-medium text-text-primary truncate">{displayModelName(modelName)}</span>
-          {modelsOpen ? <ChevronUp size={16} className="text-text-secondary shrink-0" /> : <ChevronDown size={16} className="text-text-secondary shrink-0" />}
-        </button>
-        {modelsOpen && (
-          <div className="mt-1 max-h-48 overflow-y-auto custom-scroll space-y-1 border border-border rounded-lg bg-surface p-1">
-            {filteredModels.map((model) => (
-              <button
-                key={model.name}
-                type="button"
-                onClick={() => {
-                  onModelChange(model.name)
-                  onDiffusionModelChange(model.type === 'diffusion_models' ? 'anima' : model.type === 'checkpoints' ? 'krea2' : 'qwen-image')
-                  setModelsOpen(false)
-                }}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors ${
-                  model.name === modelName
+          {modelsOpen && (
+            <div className="mt-1 max-h-48 overflow-y-auto custom-scroll space-y-1 border border-border rounded-lg bg-surface p-1">
+              {filteredModels.map((model) => (
+                <button
+                  key={model.name}
+                  type="button"
+                  onClick={() => {
+                    onModelChange(model.name)
+                    onDiffusionModelChange(model.type === 'diffusion_models' ? 'anima' : model.type === 'checkpoints' ? 'krea2' : 'qwen-image')
+                    setModelsOpen(false)
+                  }}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors ${model.name === modelName
                     ? 'bg-accent/10 text-accent font-medium'
                     : 'text-text-secondary hover:bg-surface-tertiary hover:text-text-primary'
-                }`}
-              >
-                <span className="flex-1 truncate">{displayModelName(model.name)}</span>
-                {model.name === modelName && <Check size={14} className="text-accent shrink-0" />}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                    }`}
+                >
+                  <span className="flex-1 truncate">{displayModelName(model.name)}</span>
+                  {model.name === modelName && <Check size={14} className="text-accent shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* LoRAs */}
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">LoRAs</h3>
+          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+            LoRAs
+            {compactLoraArea && hasSelection && (
+              <span className="ml-1.5 text-[11px] font-semibold text-accent">{selectedLoras.length}</span>
+            )}
+          </h3>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => setLorasOpen((o) => !o)}
               className="p-1 rounded hover:bg-surface-tertiary transition-colors"
               aria-label={lorasOpen ? 'Fechar LoRAs' : 'Abrir LoRAs'}
+              title={lorasOpen ? 'Ocultar LoRAs' : 'Mostrar LoRAs'}
             >
               {lorasOpen ? <ChevronUp size={14} className="text-text-secondary" /> : <ChevronDown size={14} className="text-text-secondary" />}
             </button>
@@ -316,44 +323,76 @@ export function ModelSidebar({
               placeholder="Buscar LoRA..."
               className="w-full px-2.5 py-1.5 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
             />
-            <div className="max-h-60 overflow-y-auto custom-scroll space-y-1">
+            <div className="max-h-60 overflow-y-auto custom-scroll">
               {filteredLoras.length === 0 ? (
                 <p className="text-sm text-text-muted text-center py-4">Nenhum LoRA encontrado</p>
-              ) : (
-                filteredLoras.map((lora) => {
-                  const selection = selectedLoras.find((sel) => sel.name === lora.name)
-                  return (
-                    <button
-                      key={lora.name}
-                      type="button"
-                      onClick={() => onToggleLora(lora.name)}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border transition-colors text-left ${
-                        selection
-                          ? 'bg-accent/10 border-accent/30 text-text-primary'
-                          : 'border-border hover:bg-surface-tertiary hover:border-accent/20 text-text-secondary'
-                      }`}
-                    >
-                      <div className="w-8 h-8 shrink-0 rounded overflow-hidden bg-surface-tertiary border border-border flex items-center justify-center">
+              ) : compactLoraArea ? (
+                <div className="grid grid-cols-4 gap-1.5 p-0.5">
+                  {filteredLoras.map((lora) => {
+                    const selection = selectedLoras.find((sel) => sel.name === lora.name)
+                    return (
+                      <button
+                        key={lora.name}
+                        type="button"
+                        onClick={() => onToggleLora(lora.name)}
+                        title={lora.name}
+                        className={`relative w-full aspect-square rounded-lg overflow-hidden border transition-colors ${selection
+                          ? 'border-accent ring-1 ring-accent/50'
+                          : 'border-border hover:border-accent/50'
+                          }`}
+                      >
                         {lora.previewUrl ? (
                           <SafeImage path={lora.previewUrl} alt="" className="w-full h-full object-cover" />
                         ) : (
-                          <span className="text-[7px] text-text-muted text-center px-0.5 leading-tight break-all">
-                            {displayLoraName(lora.name).slice(0, 10)}
+                          <span className="w-full h-full flex items-center justify-center text-[9px] text-text-muted text-center px-1 leading-tight break-all bg-surface-tertiary">
+                            {displayLoraName(lora.name).slice(0, 18)}
                           </span>
                         )}
-                      </div>
-                      <span className="flex-1 min-w-0 truncate text-sm">{displayLoraName(lora.name)}</span>
-                      {selection && <Check size={14} className="text-accent shrink-0" />}
-                    </button>
-                  )
-                })
+                        {selection && (
+                          <span className="absolute top-0 right-0 w-4 h-4 bg-accent flex items-center justify-center rounded-bl-md">
+                            <Check size={11} className="text-white" />
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredLoras.map((lora) => {
+                    const selection = selectedLoras.find((sel) => sel.name === lora.name)
+                    return (
+                      <button
+                        key={lora.name}
+                        type="button"
+                        onClick={() => onToggleLora(lora.name)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border transition-colors text-left ${selection
+                          ? 'bg-accent/10 border-accent/30 text-text-primary'
+                          : 'border-border hover:bg-surface-tertiary hover:border-accent/20 text-text-secondary'
+                          }`}
+                      >
+                        <div className="w-8 h-8 shrink-0 rounded overflow-hidden bg-surface-tertiary border border-border flex items-center justify-center">
+                          {lora.previewUrl ? (
+                            <SafeImage path={lora.previewUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[7px] text-text-muted text-center px-0.5 leading-tight break-all">
+                              {displayLoraName(lora.name).slice(0, 10)}
+                            </span>
+                          )}
+                        </div>
+                        <span className="flex-1 min-w-0 truncate text-sm">{displayLoraName(lora.name)}</span>
+                        {selection && <Check size={14} className="text-accent shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
               )}
             </div>
           </div>
         )}
 
         {/* LoRAs selecionadas com drag-and-drop */}
-        {hasSelection && (
+        {hasSelection && (!compactLoraArea || lorasOpen) && (
           <div className="mt-3 space-y-3">
             {onReorderLoras && (
               <p className="text-[10px] text-text-muted leading-tight">
@@ -392,7 +431,7 @@ export function ModelSidebar({
           </div>
         )}
 
-        {hasSelection && (
+        {hasSelection && (!compactLoraArea || lorasOpen) && (
           <button
             type="button"
             onClick={onClearLoras}
