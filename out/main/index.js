@@ -1100,6 +1100,12 @@ const MODEL_PROFILES = {
     }
   }
 };
+function normalizeModelPath(val) {
+  if (typeof val !== "string" || !/\.(safetensors|gguf|ckpt|pt|bin|onnx|engine|pth)$/i.test(val)) {
+    return val;
+  }
+  return process.platform === "win32" ? val.replace(/\//g, "\\") : val.replace(/\\/g, "/");
+}
 function mapGGUFClipToSafetensors(ggufPath) {
   const knownMappings = {
     "Qwen3-4B-Q6_K.gguf": "qwen\\qwen3_4b_fp8_scaled.safetensors",
@@ -1271,7 +1277,7 @@ class WorkflowManager {
       loraName: loraLoader?.widgets_values?.[0] ?? "None",
       loraStrengthModel: loraLoader?.widgets_values?.[1] ?? 0.5,
       loraStrengthClip: loraLoader?.type === "LoraLoader" ? loraLoader.widgets_values?.[2] : 0.5,
-      modelName: unetLoader?.widgets_values?.[0] ?? ""
+      modelName: normalizeModelPath(unetLoader?.widgets_values?.[0]) ?? ""
     };
   }
   getDefaults(modelId = "anima") {
@@ -1440,6 +1446,9 @@ class WorkflowManager {
       }
       nodeEntry.inputs = inputs;
       delete inputs["upload"];
+      for (const [key, val] of Object.entries(inputs)) {
+        inputs[key] = normalizeModelPath(val);
+      }
       if (node.type === "UNETLoader" && typeof inputs.unet_name === "string" && inputs.unet_name.toLowerCase().endsWith(".gguf")) {
         console.log(`[WorkflowManager] Swapping UNETLoader node ${node.id} (${inputs.unet_name}) to UnetLoaderGGUFAdvanced`);
         nodeEntry.class_type = "UnetLoaderGGUFAdvanced";
@@ -2049,6 +2058,9 @@ class WorkflowManager {
         if (link) inputs[inp.name] = [String(link[1]), link[2] ?? 0];
       }
       delete inputs["upload"];
+      for (const [key, val] of Object.entries(inputs)) {
+        inputs[key] = normalizeModelPath(val);
+      }
       prompt[String(node.id)] = {
         class_type: node.type,
         _meta: { title: node.title || node.type },
@@ -2064,23 +2076,85 @@ class WorkflowManager {
    *   image2 = referência de roupa       → nó LoadImage id 5
    * Mantém identidade e pose da imagem 1, transfere apenas a roupa da imagem 2.
    */
-  buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath) {
-    return this.buildTwoImagePrompt(outfitWorkflowPath, charFilename, outfitFilename, seed);
-  }
-  /**
-   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Outfit).
-   * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
-   */
-  buildTwoImagePrompt(workflowPath, image1Filename, image2Filename, seed) {
-    const raw = readFileSync(workflowPath, "utf-8");
+  buildOutfitPrompt(opts) {
+    const raw = readFileSync(opts.outfitWorkflowPath, "utf-8");
     const workflow = JSON.parse(raw);
     const prompt = this.convertUiToApi(workflow);
     const charNode = prompt["4"];
-    if (charNode?.inputs) charNode.inputs["image"] = image1Filename;
+    if (charNode?.inputs) charNode.inputs["image"] = opts.charFilename;
     const refNode = prompt["5"];
-    if (refNode?.inputs) refNode.inputs["image"] = image2Filename;
+    if (refNode?.inputs) refNode.inputs["image"] = opts.outfitFilename;
     const ksamplerNode = prompt["9"];
-    if (ksamplerNode?.inputs) ksamplerNode.inputs["seed"] = seed;
+    if (ksamplerNode?.inputs) {
+      ksamplerNode.inputs["seed"] = opts.seed;
+      if (opts.steps !== void 0) {
+        ksamplerNode.inputs["steps"] = opts.steps;
+      } else {
+        const currentSteps = typeof ksamplerNode.inputs["steps"] === "number" ? ksamplerNode.inputs["steps"] : 12;
+        if (currentSteps <= 12 && opts.diffusionModel !== "krea2") {
+          ksamplerNode.inputs["steps"] = 25;
+        }
+      }
+      if (opts.cfg !== void 0) {
+        ksamplerNode.inputs["cfg"] = opts.cfg;
+      }
+    }
+    const unetNode = prompt["1"];
+    if (unetNode?.inputs) {
+      if (opts.modelName) {
+        unetNode.inputs["unet_name"] = normalizeModelPath(opts.modelName);
+      }
+      const unetName = String(unetNode.inputs["unet_name"] || "");
+      if (unetName.toLowerCase().endsWith(".gguf")) {
+        unetNode.class_type = "UnetLoaderGGUFAdvanced";
+        delete unetNode.inputs.weight_dtype;
+        unetNode.inputs.dequant_dtype = "default";
+        unetNode.inputs.patch_dtype = "default";
+        unetNode.inputs.patch_on_device = false;
+      }
+    }
+    const loras = Array.isArray(opts.loras) ? opts.loras.filter((l) => l && l.name && l.name !== "None") : [];
+    if (loras.length > 0 && ksamplerNode?.inputs) {
+      const isKrea = opts.diffusionModel === "krea2";
+      let currentModel = ["1", 0];
+      let currentClip = ["2", 0];
+      loras.forEach((lora, i) => {
+        const chainId = String(87e3 + i);
+        if (isKrea) {
+          prompt[chainId] = {
+            class_type: "LoraLoader",
+            _meta: { title: "LoraLoader (" + lora.name + ")" },
+            inputs: {
+              model: currentModel,
+              clip: currentClip,
+              lora_name: normalizeModelPath(lora.name),
+              strength_model: lora.strengthModel,
+              strength_clip: lora.strengthClip ?? lora.strengthModel
+            }
+          };
+          currentModel = [chainId, 0];
+          currentClip = [chainId, 1];
+        } else {
+          prompt[chainId] = {
+            class_type: "LoraLoaderModelOnly",
+            _meta: { title: "LoraLoader (" + lora.name + ")" },
+            inputs: {
+              model: currentModel,
+              lora_name: normalizeModelPath(lora.name),
+              strength_model: lora.strengthModel
+            }
+          };
+          currentModel = [chainId, 0];
+        }
+      });
+      ksamplerNode.inputs["model"] = currentModel;
+      if (isKrea) {
+        const posNode = prompt["6"];
+        if (posNode?.inputs) posNode.inputs["clip"] = currentClip;
+        const negNode = prompt["7"];
+        if (negNode?.inputs) negNode.inputs["clip"] = currentClip;
+      }
+    }
     return prompt;
   }
 }
@@ -2933,14 +3007,20 @@ function setupIPC() {
     const filenamePrefix = typeof p.filenamePrefix === "string" ? p.filenamePrefix : "anima-outfit";
     if (!charImageBase64) throw new Error("Imagem da personagem não fornecida");
     if (!outfitImageBase64) throw new Error("Imagem de roupa não fornecida");
-    const outfitWorkflowFile = MODEL_PROFILES["qwen-image"].outfitWorkflowFile;
+    const diffusionModel = p.diffusionModel === "krea2" || p.diffusionModel === "qwen-image" ? p.diffusionModel : "qwen-image";
+    const modelProfile = MODEL_PROFILES[diffusionModel] || MODEL_PROFILES["qwen-image"];
+    const outfitWorkflowFile = modelProfile.outfitWorkflowFile;
     if (!outfitWorkflowFile) {
-      throw new Error("Perfil qwen-image não define outfitWorkflowFile");
+      throw new Error(`Perfil ${diffusionModel} não define outfitWorkflowFile`);
     }
     const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile);
     if (!existsSync(outfitWorkflowPath)) {
       throw new Error(`Workflow de roupa não encontrado: ${outfitWorkflowPath}`);
     }
+    const modelName = typeof p.modelName === "string" && p.modelName.trim() ? p.modelName.trim() : void 0;
+    const steps = typeof p.steps === "number" ? Math.floor(Math.max(1, Math.min(50, p.steps))) : void 0;
+    const cfg = typeof p.cfg === "number" ? Math.max(0.5, Math.min(20, p.cfg)) : void 0;
+    const loras = Array.isArray(p.loras) ? p.loras.filter((l) => l && typeof l.name === "string") : [];
     const settings2 = settingsManager.get();
     const comfyInputDir = join(settings2.comfyUIPath, "ComfyUI", "input");
     const baseUrl = comfyClient.getBaseUrl();
@@ -2952,9 +3032,19 @@ function setupIPC() {
     const outfitFilename = `anima-outfit-ref-${Date.now()}.${outfitExt}`;
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl);
     await uploadImageToComfyUI(outfitImageBase64, outfitFilename, comfyInputDir, baseUrl);
-    console.log("[Anima] Outfit: personagem=%s, referência=%s", charFilename, outfitFilename);
+    console.log("[Anima] Outfit: personagem=%s, referência=%s, modelo=%s, loras=%d, steps=%s, cfg=%s", charFilename, outfitFilename, modelName ?? "default", loras.length, steps ?? "default", cfg ?? "default");
     try {
-      const prompt = workflowManager.buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath);
+      const prompt = workflowManager.buildOutfitPrompt({
+        charFilename,
+        outfitFilename,
+        seed,
+        outfitWorkflowPath,
+        diffusionModel,
+        modelName,
+        loras,
+        steps,
+        cfg
+      });
       console.log("[Anima] Outfit prompt construído, nós:", Object.keys(prompt).length);
       const readNumInput = (nodeId, inputName, fallback) => {
         const node = prompt[nodeId];
@@ -2962,16 +3052,16 @@ function setupIPC() {
         return typeof val === "number" ? val : fallback;
       };
       const outfitParams = {
-        diffusionModel: "qwen-image",
+        diffusionModel,
         prompt: "",
         negativePrompt: "",
         seed,
-        steps: readNumInput("9", "steps", 12),
-        cfg: readNumInput("9", "cfg", 2.5),
+        steps: steps ?? readNumInput("9", "steps", 25),
+        cfg: cfg ?? readNumInput("9", "cfg", 2.5),
         width: readNumInput("8", "width", 1024),
         height: readNumInput("8", "height", 1024),
-        loras: [],
-        modelName: ""
+        loras,
+        modelName: modelName ?? ""
       };
       const response = await comfyClient.sendPrompt(prompt);
       console.log("[Anima] Outfit prompt enviado, ID:", response.prompt_id);

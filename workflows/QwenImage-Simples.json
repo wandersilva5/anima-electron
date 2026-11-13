@@ -20,7 +20,7 @@
         { "name": "MODEL", "type": "MODEL", "links": [1] }
       ],
       "properties": { "cnr_id": "comfy-core", "Node name for S&R": "UNETLoader" },
-      "widgets_values": ["qwen/qwen_image_2.1_int8_convrot.safetensors", "default"]
+      "widgets_values": ["qwen\\qwen_image_2.1_int8_convrot.safetensors", "default"]
     },
     {
       "id": 2,

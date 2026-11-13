@@ -74,6 +74,10 @@ export interface PoseControlNetParams {
 export interface OutfitGenerationParams {
   charImageBase64: string      // Imagem da personagem (identidade + pose a manter)
   outfitImageBase64: string    // Imagem de referência da roupa de outro personagem
+  diffusionModel?: DiffusionModelId
+  loras?: LoraSelection[]
+  steps?: number
+  cfg?: number
   seed?: number
   filenamePrefix?: string
   modelName?: string           // Checkpoint opcional

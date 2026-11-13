@@ -4,6 +4,9 @@ import { Upload, Trash2, Play, Clock, Shirt, ClipboardPaste, AlertCircle } from 
 import type { GenerationResult } from '@shared/types'
 import { ModelSidebar } from './ModelSidebar'
 import { useGenerationProgress } from '../hooks/useGenerationProgress'
+import { useLoraSelection } from '../hooks/useLoraSelection'
+import { useFilterModels } from '../hooks/useFilterModels'
+import { MODEL_PROFILES } from '@shared/modelProfiles'
 
 interface DropPanelProps {
   title: string
@@ -183,21 +186,35 @@ export function OutfitStudio() {
   const [dragOverOutfit, setDragOverOutfit] = useState(false)
   const { progress, elapsed, eta, startProgress } = useGenerationProgress()
 
-  // ModelSidebar state — não usado na geração de roupa (Krea2-Outfit tem modelo fixo no workflow)
-  // mas mantemos para consistência visual
-  const [selectedCheckpoint] = useState('')
-  const selectedLoras: import('@shared/types').LoraSelection[] = []
-  const diffusionModel: import('@shared/types').DiffusionModelId = 'qwen-image'
+  const [diffusionModel, setDiffusionModel] = useState<import('@shared/types').DiffusionModelId>('qwen-image')
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState('')
+  const { selectedLoras, setSelectedLoras, toggleLora, clearLoras, setLoraStrength, reorderLoras } = useLoraSelection([])
+  const [steps, setSteps] = useState(25)
+  const [cfg, setCfg] = useState(2.5)
+
+  const compatibleModels = useFilterModels(models, diffusionModel)
 
   const charInputRef = useRef<HTMLInputElement>(null)
   const outfitInputRef = useRef<HTMLInputElement>(null)
 
+  // Auto-seleciona checkpoint compatível
   useEffect(() => {
-    const folder = 'Krea2'
+    if (compatibleModels.length === 0) return
+    if (compatibleModels.some((m) => m.name === selectedCheckpoint)) return
+    const preferred = compatibleModels.find(
+      (m) => (m.name.includes('qwen_image_2.1') || m.name.includes('krea2_turbo')) && !m.name.toLowerCase().endsWith('.gguf')
+    )
+    setSelectedCheckpoint((preferred ?? compatibleModels[0]).name)
+  }, [compatibleModels, selectedCheckpoint])
+
+  // Carrega LoRAs da pasta do perfil atual
+  useEffect(() => {
+    const folder = MODEL_PROFILES[diffusionModel]?.loraFolder || 'qwen'
     window.electronAPI.loras.list(folder).then((newLoras) => {
       useSessionStore.getState().setTabLoras(newLoras)
+      setSelectedLoras((prev) => prev.filter((sel) => newLoras.some((l) => l.name === sel.name)))
     }).catch(() => {})
-  }, [])
+  }, [diffusionModel, setSelectedLoras])
 
   // Imagem escolhida no histórico (sidebar) vira a referência de personagem
   const pendingPick = useSessionStore((s) => s.pendingHistoryPick)
@@ -282,7 +299,12 @@ export function OutfitStudio() {
         charImageBase64: charSrc,
         outfitImageBase64: outfitSrc,
         seed,
-        filenamePrefix: 'anima-outfit'
+        filenamePrefix: 'anima-outfit',
+        diffusionModel,
+        modelName: selectedCheckpoint,
+        loras: selectedLoras,
+        steps,
+        cfg
       })
 
       const image = result.images?.[0]
@@ -296,12 +318,12 @@ export function OutfitStudio() {
           filePath: image.filePath,
           filename: image.filename,
           params: {
-            diffusionModel: 'krea2',
+            diffusionModel,
             prompt: '',
             negativePrompt: '',
             seed,
-            steps: 8,
-            cfg: 1,
+            steps,
+            cfg,
             width: 1024,
             height: 1024,
             modelName: selectedCheckpoint,
@@ -317,7 +339,7 @@ export function OutfitStudio() {
       stopProgress()
       setGenerating(false)
     }
-  }, [outfitSrc, charSrc, selectedCheckpoint, selectedLoras, startProgress, addToHistory])
+  }, [outfitSrc, charSrc, diffusionModel, selectedCheckpoint, selectedLoras, steps, cfg, startProgress, addToHistory])
 
   return (
     <div className="flex-1 flex gap-0 overflow-hidden">
@@ -409,28 +431,68 @@ export function OutfitStudio() {
         <div className="flex flex-col h-full">
           <div className="p-4 space-y-4 overflow-y-auto">
 <ModelSidebar
-      diffusionModel={diffusionModel}
-      onDiffusionModelChange={(id: any) => {
-        console.log('Diffusion model change requested:', id)
-        // Do not allow changing diffusion model in outfit studio
-      }}
-      hideDiffusionSelector
-      modelName={selectedCheckpoint}
-      onModelChange={() => {}}
-      models={models}
-      loras={loras}
-      selectedLoras={selectedLoras}
-      onToggleLora={() => {}}
-      onClearLoras={() => {}}
-      onLoraStrengthChange={() => {}}
-      refreshLorasFn={refreshLoras}
-    />
+              diffusionModel={diffusionModel}
+              onDiffusionModelChange={(id) => {
+                setDiffusionModel(id)
+                if (id === 'krea2') {
+                  setSteps(10)
+                  setCfg(1.0)
+                } else {
+                  setSteps(25)
+                  setCfg(2.5)
+                }
+              }}
+              modelName={selectedCheckpoint}
+              onModelChange={setSelectedCheckpoint}
+              models={compatibleModels}
+              loras={loras}
+              selectedLoras={selectedLoras}
+              onToggleLora={toggleLora}
+              onClearLoras={clearLoras}
+              onLoraStrengthChange={setLoraStrength}
+              onReorderLoras={reorderLoras}
+              refreshLorasFn={refreshLoras}
+            />
+
+            <div className="p-3 rounded-lg bg-surface border border-border space-y-3">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-text-muted">Passos (Steps)</label>
+                  <span className="text-xs text-text-secondary font-mono">{steps}</span>
+                </div>
+                <input
+                  type="range"
+                  value={steps}
+                  min={1}
+                  max={50}
+                  step={1}
+                  onChange={(e) => setSteps(Number(e.target.value))}
+                  className="w-full accent-accent"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-text-muted">CFG Scale</label>
+                  <span className="text-xs text-text-secondary font-mono">{cfg}</span>
+                </div>
+                <input
+                  type="range"
+                  value={cfg}
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  onChange={(e) => setCfg(Number(e.target.value))}
+                  className="w-full accent-accent"
+                />
+              </div>
+            </div>
 
             <div className="p-3 rounded-lg bg-surface border border-border text-xs text-text-muted space-y-1">
               <p className="font-medium text-text-secondary">Como funciona:</p>
               <p>1. A <strong className="text-text-primary">Personagem</strong> define a identidade, rosto, pose e corpo a preservar.</p>
               <p>2. A <strong className="text-text-primary">Roupa de Referência</strong> define a roupa de outro personagem a transferir.</p>
-              <p>3. O Krea2 combina os dois: a personagem da imagem 1 vestindo a roupa da imagem 2.</p>
+              <p>3. O Qwen Image 2.1 combina os dois: a personagem da imagem 1 vestindo a roupa da imagem 2.</p>
             </div>
           </div>
 

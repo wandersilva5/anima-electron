@@ -30,6 +30,13 @@ interface WorkflowData {
   defaults: WorkflowDefaults
 }
 
+function normalizeModelPath(val: unknown): unknown {
+  if (typeof val !== 'string' || !/\.(safetensors|gguf|ckpt|pt|bin|onnx|engine|pth)$/i.test(val)) {
+    return val
+  }
+  return process.platform === 'win32' ? val.replace(/\//g, '\\') : val.replace(/\\/g, '/')
+}
+
 function mapGGUFClipToSafetensors(ggufPath: string): string {
   const knownMappings: Record<string, string> = {
     'Qwen3-4B-Q6_K.gguf': 'qwen\\qwen3_4b_fp8_scaled.safetensors',
@@ -232,7 +239,7 @@ export class WorkflowManager {
       loraName: (loraLoader?.widgets_values?.[0] as string) ?? 'None',
       loraStrengthModel: (loraLoader?.widgets_values?.[1] as number) ?? 0.5,
       loraStrengthClip: (loraLoader?.type === 'LoraLoader' ? (loraLoader.widgets_values?.[2] as number) : 0.5),
-      modelName: (unetLoader?.widgets_values?.[0] as string) ?? ''
+      modelName: (normalizeModelPath(unetLoader?.widgets_values?.[0]) as string) ?? ''
     }
   }
 
@@ -428,6 +435,10 @@ export class WorkflowManager {
 
       // Widget de upload do LoadImage não existe na API do ComfyUI
       delete inputs['upload']
+
+      for (const [key, val] of Object.entries(inputs)) {
+        inputs[key] = normalizeModelPath(val)
+      }
 
       // Checkpoints .gguf exigem o loader do plugin ComfyUI-GGUF
       if (node.type === 'UNETLoader' && typeof inputs.unet_name === 'string' && inputs.unet_name.toLowerCase().endsWith('.gguf')) {
@@ -1195,6 +1206,10 @@ export class WorkflowManager {
 
       delete inputs['upload']
 
+      for (const [key, val] of Object.entries(inputs)) {
+        inputs[key] = normalizeModelPath(val)
+      }
+
       prompt[String(node.id)] = {
         class_type: node.type,
         _meta: { title: (node as { title?: string }).title || node.type },
@@ -1212,40 +1227,108 @@ export class WorkflowManager {
    *   image2 = referência de roupa       → nó LoadImage id 5
    * Mantém identidade e pose da imagem 1, transfere apenas a roupa da imagem 2.
    */
-  buildOutfitPrompt(
-    charFilename: string,
-    outfitFilename: string,
-    seed: number,
-    outfitWorkflowPath: string
-  ): Record<string, unknown> {
-    return this.buildTwoImagePrompt(outfitWorkflowPath, charFilename, outfitFilename, seed)
-  }
-
-  /**
-   * Conversão genérica UI → API para workflows de duas imagens (Krea2-Outfit).
-   * Layout fixo: LoadImage 4 (imagem 1), LoadImage 5 (imagem 2), KSampler 9 (seed).
-   */
-  private buildTwoImagePrompt(
-    workflowPath: string,
-    image1Filename: string,
-    image2Filename: string,
+  buildOutfitPrompt(opts: {
+    charFilename: string
+    outfitFilename: string
     seed: number
-  ): Record<string, unknown> {
-    const raw = readFileSync(workflowPath, 'utf-8')
+    outfitWorkflowPath: string
+    diffusionModel?: DiffusionModelId
+    modelName?: string
+    loras?: import('@shared/types').LoraSelection[]
+    steps?: number
+    cfg?: number
+  }): Record<string, unknown> {
+    const raw = readFileSync(opts.outfitWorkflowPath, 'utf-8')
     const workflow: WorkflowJSON = JSON.parse(raw)
 
     const prompt = this.convertUiToApi(workflow)
 
-    // Substitui filenames nos LoadImage
+    // Substitui filenames nos LoadImage (4 = char, 5 = outfit)
     const charNode = prompt['4'] as { inputs: Record<string, unknown> } | undefined
-    if (charNode?.inputs) charNode.inputs['image'] = image1Filename
+    if (charNode?.inputs) charNode.inputs['image'] = opts.charFilename
 
     const refNode = prompt['5'] as { inputs: Record<string, unknown> } | undefined
-    if (refNode?.inputs) refNode.inputs['image'] = image2Filename
+    if (refNode?.inputs) refNode.inputs['image'] = opts.outfitFilename
 
-    // Substitui semente no KSampler (nó 9)
+    // Substitui semente, steps e cfg no KSampler (nó 9)
     const ksamplerNode = prompt['9'] as { inputs: Record<string, unknown> } | undefined
-    if (ksamplerNode?.inputs) ksamplerNode.inputs['seed'] = seed
+    if (ksamplerNode?.inputs) {
+      ksamplerNode.inputs['seed'] = opts.seed
+      if (opts.steps !== undefined) {
+        ksamplerNode.inputs['steps'] = opts.steps
+      } else {
+        const currentSteps = typeof ksamplerNode.inputs['steps'] === 'number' ? ksamplerNode.inputs['steps'] : 12
+        if (currentSteps <= 12 && opts.diffusionModel !== 'krea2') {
+          ksamplerNode.inputs['steps'] = 25
+        }
+      }
+      if (opts.cfg !== undefined) {
+        ksamplerNode.inputs['cfg'] = opts.cfg
+      }
+    }
+
+    // Checkpoint / UNETLoader (nó 1)
+    const unetNode = prompt['1'] as { class_type?: string; inputs: Record<string, unknown> } | undefined
+    if (unetNode?.inputs) {
+      if (opts.modelName) {
+        unetNode.inputs['unet_name'] = normalizeModelPath(opts.modelName)
+      }
+      const unetName = String(unetNode.inputs['unet_name'] || '')
+      if (unetName.toLowerCase().endsWith('.gguf')) {
+        unetNode.class_type = 'UnetLoaderGGUFAdvanced'
+        delete unetNode.inputs.weight_dtype
+        unetNode.inputs.dequant_dtype = 'default'
+        unetNode.inputs.patch_dtype = 'default'
+        unetNode.inputs.patch_on_device = false
+      }
+    }
+
+    // Encadeamento de LoRAs (se houver)
+    const loras = Array.isArray(opts.loras) ? opts.loras.filter((l) => l && l.name && l.name !== 'None') : []
+    if (loras.length > 0 && ksamplerNode?.inputs) {
+      const isKrea = opts.diffusionModel === 'krea2'
+      let currentModel: [string, number] = ['1', 0]
+      let currentClip: [string, number] = ['2', 0]
+
+      loras.forEach((lora, i) => {
+        const chainId = String(87000 + i)
+        if (isKrea) {
+          prompt[chainId] = {
+            class_type: 'LoraLoader',
+            _meta: { title: 'LoraLoader (' + lora.name + ')' },
+            inputs: {
+              model: currentModel,
+              clip: currentClip,
+              lora_name: normalizeModelPath(lora.name),
+              strength_model: lora.strengthModel,
+              strength_clip: lora.strengthClip ?? lora.strengthModel
+            }
+          }
+          currentModel = [chainId, 0]
+          currentClip = [chainId, 1]
+        } else {
+          prompt[chainId] = {
+            class_type: 'LoraLoaderModelOnly',
+            _meta: { title: 'LoraLoader (' + lora.name + ')' },
+            inputs: {
+              model: currentModel,
+              lora_name: normalizeModelPath(lora.name),
+              strength_model: lora.strengthModel
+            }
+          }
+          currentModel = [chainId, 0]
+        }
+      })
+
+      ksamplerNode.inputs['model'] = currentModel
+
+      if (isKrea) {
+        const posNode = prompt['6'] as { inputs: Record<string, unknown> } | undefined
+        if (posNode?.inputs) posNode.inputs['clip'] = currentClip
+        const negNode = prompt['7'] as { inputs: Record<string, unknown> } | undefined
+        if (negNode?.inputs) negNode.inputs['clip'] = currentClip
+      }
+    }
 
     return prompt
   }

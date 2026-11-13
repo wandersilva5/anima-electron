@@ -755,15 +755,21 @@ function setupIPC(): void {
     if (!charImageBase64) throw new Error('Imagem da personagem não fornecida')
     if (!outfitImageBase64) throw new Error('Imagem de roupa não fornecida')
 
-    // Resolve o caminho do workflow de roupa via profile (mesma resolução do WorkflowManager)
-    const outfitWorkflowFile = MODEL_PROFILES['qwen-image'].outfitWorkflowFile
+    const diffusionModel = (p.diffusionModel === 'krea2' || p.diffusionModel === 'qwen-image' ? p.diffusionModel : 'qwen-image') as DiffusionModelId
+    const modelProfile = MODEL_PROFILES[diffusionModel] || MODEL_PROFILES['qwen-image']
+    const outfitWorkflowFile = modelProfile.outfitWorkflowFile
     if (!outfitWorkflowFile) {
-      throw new Error('Perfil qwen-image não define outfitWorkflowFile')
+      throw new Error(`Perfil ${diffusionModel} não define outfitWorkflowFile`)
     }
     const outfitWorkflowPath = join(workflowsDir, outfitWorkflowFile)
     if (!existsSync(outfitWorkflowPath)) {
       throw new Error(`Workflow de roupa não encontrado: ${outfitWorkflowPath}`)
     }
+
+    const modelName = typeof p.modelName === 'string' && p.modelName.trim() ? p.modelName.trim() : undefined
+    const steps = typeof p.steps === 'number' ? Math.floor(Math.max(1, Math.min(50, p.steps))) : undefined
+    const cfg = typeof p.cfg === 'number' ? Math.max(0.5, Math.min(20, p.cfg)) : undefined
+    const loras = Array.isArray(p.loras) ? (p.loras as Array<{ name: string; strengthModel: number; strengthClip: number }>).filter(l => l && typeof l.name === 'string') : []
 
     const settings = settingsManager.get()
     const comfyInputDir = join(settings.comfyUIPath, 'ComfyUI', 'input')
@@ -779,10 +785,20 @@ function setupIPC(): void {
 
     await uploadImageToComfyUI(charImageBase64, charFilename, comfyInputDir, baseUrl)
     await uploadImageToComfyUI(outfitImageBase64, outfitFilename, comfyInputDir, baseUrl)
-    console.log('[Anima] Outfit: personagem=%s, referência=%s', charFilename, outfitFilename)
+    console.log('[Anima] Outfit: personagem=%s, referência=%s, modelo=%s, loras=%d, steps=%s, cfg=%s', charFilename, outfitFilename, modelName ?? 'default', loras.length, steps ?? 'default', cfg ?? 'default')
 
     try {
-      const prompt = workflowManager.buildOutfitPrompt(charFilename, outfitFilename, seed, outfitWorkflowPath)
+      const prompt = workflowManager.buildOutfitPrompt({
+        charFilename,
+        outfitFilename,
+        seed,
+        outfitWorkflowPath,
+        diffusionModel,
+        modelName,
+        loras,
+        steps,
+        cfg
+      })
       console.log('[Anima] Outfit prompt construído, nós:', Object.keys(prompt).length)
 
       // Extrai steps/cfg/dimensões reais do workflow para o histórico
@@ -792,16 +808,16 @@ function setupIPC(): void {
         return typeof val === 'number' ? val : fallback
       }
       const outfitParams = {
-        diffusionModel: 'qwen-image' as DiffusionModelId,
+        diffusionModel,
         prompt: '',
         negativePrompt: '',
         seed,
-        steps: readNumInput('9', 'steps', 12),
-        cfg: readNumInput('9', 'cfg', 2.5),
+        steps: steps ?? readNumInput('9', 'steps', 25),
+        cfg: cfg ?? readNumInput('9', 'cfg', 2.5),
         width: readNumInput('8', 'width', 1024),
         height: readNumInput('8', 'height', 1024),
-        loras: [],
-        modelName: ''
+        loras,
+        modelName: modelName ?? ''
       }
 
       const response = await comfyClient.sendPrompt(prompt)
