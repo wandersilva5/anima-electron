@@ -23,6 +23,181 @@ interface ModelSidebarProps {
   compactLoraArea?: boolean
 }
 
+const displayModelName = (name: string): string =>
+  name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
+
+const displayLoraName = (name: string): string =>
+  name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
+
+interface LoraRowProps {
+  sel: LoraSelection
+  idx: number
+  total: number
+  isFirst: boolean
+  isLast: boolean
+  canReorder: boolean
+  loras: LoraInfo[]
+  profile: typeof MODEL_PROFILES[DiffusionModelId]
+  onToggleLora: (name: string) => void
+  onLoraStrengthChange: (name: string, kind: 'model' | 'clip', v: number) => void
+  onReorderLoras?: (from: number, to: number) => void
+  dragLoraIdx: number | null
+  dropLoraIdx: number | null
+  dropPosition: 'before' | 'after' | null
+  setDragLoraIdx: (idx: number | null) => void
+  setDropLoraIdx: (idx: number | null) => void
+  setDropPosition: (pos: 'before' | 'after' | null) => void
+}
+
+const LoraRow = memo(function LoraRow({
+  sel,
+  idx,
+  total,
+  isFirst,
+  isLast,
+  canReorder,
+  loras,
+  profile,
+  onToggleLora,
+  onLoraStrengthChange,
+  onReorderLoras,
+  dragLoraIdx,
+  dropLoraIdx,
+  dropPosition,
+  setDragLoraIdx,
+  setDropLoraIdx,
+  setDropPosition
+}: LoraRowProps) {
+  const isDragging = dragLoraIdx === idx
+  const isDropTarget = dropLoraIdx === idx && dragLoraIdx !== null && dragLoraIdx !== idx
+  const selLora = loras.find((l) => l.name === sel.name)
+
+  return (
+    <div
+      onDragOver={canReorder ? (e) => {
+        if (dragLoraIdx === null) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (dragLoraIdx !== idx) {
+          setDropLoraIdx(idx)
+          const rect = e.currentTarget.getBoundingClientRect()
+          setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
+        }
+      } : undefined}
+      onDrop={canReorder ? (e) => {
+        e.preventDefault()
+        if (dragLoraIdx !== null && dragLoraIdx !== idx && onReorderLoras) {
+          const to = dropPosition === 'after' ? idx + 1 : idx
+          onReorderLoras(idx, to)
+        }
+        setDragLoraIdx(null)
+        setDropLoraIdx(null)
+        setDropPosition(null)
+      } : undefined}
+      className={`
+          p-2 rounded-xl border bg-surface transition-all
+          ${isDragging ? 'opacity-40' : ''}
+          ${isDropTarget && dropPosition === 'before' ? 'border-t-2 border-t-accent' : ''}
+          ${isDropTarget && dropPosition === 'after' ? 'border-b-2 border-b-accent' : ''}
+        `}
+    >
+      <div
+        draggable={canReorder}
+        onDragStart={canReorder ? (e) => {
+          setDragLoraIdx(idx)
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', String(idx))
+        } : undefined}
+        onDragEnd={canReorder ? () => {
+          setDragLoraIdx(null)
+          setDropLoraIdx(null)
+          setDropPosition(null)
+        } : undefined}
+        className={`flex items-center justify-between mb-1.5 ${canReorder ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        title={canReorder ? 'Arraste para reordenar' : undefined}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-bold font-mono">
+            {idx + 1}º
+          </span>
+          {total === 1 ? (
+            <span className="px-1.5 py-0.5 rounded bg-surface-tertiary text-text-muted text-[9px] font-medium uppercase tracking-wide">
+              único
+            </span>
+          ) : isFirst ? (
+            <span className="px-1.5 py-0.5 rounded bg-success/15 text-success text-[9px] font-medium uppercase tracking-wide">
+              primeiro
+            </span>
+          ) : isLast ? (
+            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9px] font-medium uppercase tracking-wide">
+              último
+            </span>
+          ) : null}
+        </div>
+        {canReorder && (
+          <GripVertical
+            size={14}
+            className={`shrink-0 transition-colors ${isDragging ? 'text-accent' : 'text-text-muted'}`}
+          />
+        )}
+      </div>
+      <div className="flex gap-2.5">
+        <div className="flex flex-col items-center gap-1 shrink-0 w-20">
+          <div className="w-20 h-20 rounded-lg border border-border overflow-hidden bg-surface-tertiary flex items-center justify-center">
+            {selLora?.previewUrl ? (
+              <SafeImage path={selLora.previewUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-lg text-text-muted font-bold">{idx + 1}</span>
+            )}
+          </div>
+          <span className="text-[10px] text-text-secondary font-medium truncate w-full text-center" title={displayLoraName(sel.name)}>{displayLoraName(sel.name)}</span>
+          <button
+            onClick={() => onToggleLora(sel.name)}
+            className="text-[10px] text-text-muted hover:text-error transition-colors"
+            title="Remover LoRA"
+          >
+            <X size={12} />
+          </button>
+        </div>
+        <div className="flex-1 min-w-0 space-y-1.5 py-0.5">
+          <div className="space-y-0.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-text-muted">Model Strength</label>
+              <span className="text-[10px] text-text-secondary font-mono">{sel.strengthModel.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              value={sel.strengthModel}
+              min={0}
+              max={2}
+              step={0.05}
+              onChange={(e) => onLoraStrengthChange(sel.name, 'model', Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+          {profile.hasLoraClipStrength && (
+            <div className="space-y-0.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] text-text-muted">CLIP Strength</label>
+                <span className="text-[10px] text-text-secondary font-mono">{sel.strengthClip.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                value={sel.strengthClip}
+                min={0}
+                max={2}
+                step={0.05}
+                onChange={(e) => onLoraStrengthChange(sel.name, 'clip', Number(e.target.value))}
+                className="w-full"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
 export function ModelSidebar({
   diffusionModel,
   onDiffusionModelChange,
@@ -56,183 +231,6 @@ export function ModelSidebar({
 
   // Se hideDiffusionSelector for true, não renderizamos o seletor de modelo de difusão
   const showDiffusionSelector = !hideDiffusionSelector
-
-  const displayModelName = (name: string): string =>
-    name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
-
-  const displayLoraName = (name: string): string =>
-    name.replace(/\.(safetensors|ckpt|gguf)$/, '').split(/[/\\]/).pop() ?? name
-
-  // Componente memoizado para evitar re-renders
-  const LoraRow = memo(({
-    sel,
-    idx,
-    total,
-    isFirst,
-    isLast,
-    canReorder,
-    loras,
-    profile,
-    onToggleLora,
-    onLoraStrengthChange,
-    onReorderLoras,
-    dragLoraIdx,
-    dropLoraIdx,
-    dropPosition,
-    setDragLoraIdx,
-    setDropLoraIdx,
-    setDropPosition,
-    displayLoraName
-  }: {
-    sel: LoraSelection
-    idx: number
-    total: number
-    isFirst: boolean
-    isLast: boolean
-    canReorder: boolean
-    loras: LoraInfo[]
-    profile: typeof MODEL_PROFILES[DiffusionModelId]
-    onToggleLora: (name: string) => void
-    onLoraStrengthChange: (name: string, kind: 'model' | 'clip', v: number) => void
-    onReorderLoras?: (from: number, to: number) => void
-    dragLoraIdx: number | null
-    dropLoraIdx: number | null
-    dropPosition: 'before' | 'after' | null
-    setDragLoraIdx: (idx: number | null) => void
-    setDropLoraIdx: (idx: number | null) => void
-    setDropPosition: (pos: 'before' | 'after' | null) => void
-    displayLoraName: (name: string) => string
-  }) => {
-    const isDragging = dragLoraIdx === idx
-    const isDropTarget = dropLoraIdx === idx && dragLoraIdx !== null && dragLoraIdx !== idx
-    const selLora = loras.find((l) => l.name === sel.name)
-
-    return (
-      <div
-        key={sel.name}
-        onDragOver={canReorder ? (e) => {
-          if (dragLoraIdx === null) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'move'
-          if (dragLoraIdx !== idx) {
-            setDropLoraIdx(idx)
-            const rect = e.currentTarget.getBoundingClientRect()
-            setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-          }
-        } : undefined}
-        onDrop={canReorder ? (e) => {
-          e.preventDefault()
-          if (dragLoraIdx !== null && dragLoraIdx !== idx && onReorderLoras) {
-            const to = dropPosition === 'after' ? idx + 1 : idx
-            onReorderLoras(idx, to)
-          }
-          setDragLoraIdx(null)
-          setDropLoraIdx(null)
-          setDropPosition(null)
-        } : undefined}
-        className={`
-          p-2 rounded-xl border bg-surface transition-all
-          ${isDragging ? 'opacity-40' : ''}
-          ${isDropTarget && dropPosition === 'before' ? 'border-t-2 border-t-accent' : ''}
-          ${isDropTarget && dropPosition === 'after' ? 'border-b-2 border-b-accent' : ''}
-        `}
-      >
-        <div
-          draggable={canReorder}
-          onDragStart={canReorder ? (e) => {
-            setDragLoraIdx(idx)
-            e.dataTransfer.effectAllowed = 'move'
-            e.dataTransfer.setData('text/plain', String(idx))
-          } : undefined}
-          onDragEnd={canReorder ? () => {
-            setDragLoraIdx(null)
-            setDropLoraIdx(null)
-            setDropPosition(null)
-          } : undefined}
-          className={`flex items-center justify-between mb-1.5 ${canReorder ? 'cursor-grab active:cursor-grabbing' : ''}`}
-          title={canReorder ? 'Arraste para reordenar' : undefined}
-        >
-          <div className="flex items-center gap-1.5">
-            <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-bold font-mono">
-              {idx + 1}º
-            </span>
-            {total === 1 ? (
-              <span className="px-1.5 py-0.5 rounded bg-surface-tertiary text-text-muted text-[9px] font-medium uppercase tracking-wide">
-                único
-              </span>
-            ) : isFirst ? (
-              <span className="px-1.5 py-0.5 rounded bg-success/15 text-success text-[9px] font-medium uppercase tracking-wide">
-                primeiro
-              </span>
-            ) : isLast ? (
-              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9px] font-medium uppercase tracking-wide">
-                último
-              </span>
-            ) : null}
-          </div>
-          {canReorder && (
-            <GripVertical
-              size={14}
-              className={`shrink-0 transition-colors ${isDragging ? 'text-accent' : 'text-text-muted'}`}
-            />
-          )}
-        </div>
-        <div className="flex gap-2.5">
-          <div className="flex flex-col items-center gap-1 shrink-0 w-20">
-            <div className="w-20 h-20 rounded-lg border border-border overflow-hidden bg-surface-tertiary flex items-center justify-center">
-              {selLora?.previewUrl ? (
-                <SafeImage path={selLora.previewUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-lg text-text-muted font-bold">{idx + 1}</span>
-              )}
-            </div>
-            <span className="text-[10px] text-text-secondary font-medium truncate w-full text-center" title={displayLoraName(sel.name)}>{displayLoraName(sel.name)}</span>
-            <button
-              onClick={() => onToggleLora(sel.name)}
-              className="text-[10px] text-text-muted hover:text-error transition-colors"
-              title="Remover LoRA"
-            >
-              <X size={12} />
-            </button>
-          </div>
-          <div className="flex-1 min-w-0 space-y-1.5 py-0.5">
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] text-text-muted">Model Strength</label>
-                <span className="text-[10px] text-text-secondary font-mono">{sel.strengthModel.toFixed(2)}</span>
-              </div>
-              <input
-                type="range"
-                value={sel.strengthModel}
-                min={0}
-                max={2}
-                step={0.05}
-                onChange={(e) => onLoraStrengthChange(sel.name, 'model', Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            {profile.hasLoraClipStrength && (
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] text-text-muted">CLIP Strength</label>
-                  <span className="text-[10px] text-text-secondary font-mono">{sel.strengthClip.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  value={sel.strengthClip}
-                  min={0}
-                  max={2}
-                  step={0.05}
-                  onChange={(e) => onLoraStrengthChange(sel.name, 'clip', Number(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    )
-  })
 
   return (
     <>
@@ -446,7 +444,6 @@ export function ModelSidebar({
                   setDragLoraIdx={setDragLoraIdx}
                   setDropLoraIdx={setDropLoraIdx}
                   setDropPosition={setDropPosition}
-                  displayLoraName={displayLoraName}
                 />
               )
             })}
