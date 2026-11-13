@@ -259,25 +259,47 @@ export function ModelSidebar({
             {modelsOpen ? <ChevronUp size={16} className="text-text-secondary shrink-0" /> : <ChevronDown size={16} className="text-text-secondary shrink-0" />}
           </button>
           {modelsOpen && (
-            <div className="mt-1 max-h-48 overflow-y-auto custom-scroll space-y-1 border border-border rounded-lg bg-surface p-1">
-              {filteredModels.map((model) => (
-                <button
-                  key={model.name}
-                  type="button"
-                  onClick={() => {
-                    onModelChange(model.name)
-                    onDiffusionModelChange(model.type === 'diffusion_models' ? 'anima' : model.type === 'checkpoints' ? 'krea2' : 'qwen-image')
-                    setModelsOpen(false)
-                  }}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors ${model.name === modelName
-                    ? 'bg-accent/10 text-accent font-medium'
-                    : 'text-text-secondary hover:bg-surface-tertiary hover:text-text-primary'
-                    }`}
-                >
-                  <span className="flex-1 truncate">{displayModelName(model.name)}</span>
-                  {model.name === modelName && <Check size={14} className="text-accent shrink-0" />}
-                </button>
-              ))}
+            <div className="mt-1 max-h-48 overflow-y-auto custom-scroll border border-border rounded-lg bg-surface p-1">
+              {filteredModels.length === 0 ? (
+                <p className="text-xs text-text-muted text-center py-3">Nenhum modelo encontrado</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5 p-0.5">
+                  {filteredModels.map((model) => {
+                    const displayName = displayModelName(model.name)
+                    const isSelected = model.name === modelName
+                    return (
+                      <button
+                        key={model.name}
+                        type="button"
+                        onClick={() => {
+                          onModelChange(model.name)
+                          onDiffusionModelChange(model.type === 'diffusion_models' ? 'anima' : model.type === 'checkpoints' ? 'krea2' : 'qwen-image')
+                          setModelsOpen(false)
+                        }}
+                        title={displayName}
+                        className={`relative aspect-square rounded-xl border-2 overflow-hidden transition-all ${
+                          isSelected
+                            ? 'border-accent ring-1 ring-accent'
+                            : 'border-border hover:border-text-muted'
+                        }`}
+                      >
+                        {model.previewUrl ? (
+                          <SafeImage path={model.previewUrl} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full bg-surface-tertiary flex items-center justify-center">
+                            <span className="text-[10px] text-text-muted text-center px-1 leading-tight break-all">
+                              {displayName.slice(0, 18)}
+                            </span>
+                          </div>
+                        )}
+                        {isSelected && (
+                          <div className="absolute inset-x-0 bottom-0 h-1 bg-accent" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
