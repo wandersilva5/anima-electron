@@ -2,7 +2,7 @@ import { useState, memo } from 'react'
 import { useFilterModels } from '../hooks/useFilterModels'
 import { useRefreshLoras } from '../hooks/useRefreshLoras'
 import { X, GripVertical, ChevronUp, ChevronDown, Check, RefreshCw } from 'lucide-react'
-import { MODEL_PROFILES } from '@shared/modelProfiles'
+import { MODEL_PROFILES, MODEL_IDS } from '@shared/modelProfiles'
 import type { DiffusionModelId, ModelInfo, LoraInfo, LoraSelection } from '@shared/types'
 import { SafeImage } from './SafeImage'
 
@@ -229,25 +229,57 @@ export function ModelSidebar({
   const profile = MODEL_PROFILES[diffusionModel]
   const hasSelection = selectedLoras.length > 0
 
-  // Se hideDiffusionSelector for true, não renderizamos o seletor de modelo de difusão
-  const showDiffusionSelector = !hideDiffusionSelector
-
   return (
     <>
-      {/* Modelo de Difusão */}
-      {showDiffusionSelector && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Modelo de Difusão</h3>
-            <button
-              type="button"
-              onClick={() => setModelsOpen((o) => !o)}
-              className="p-1 rounded hover:bg-surface-tertiary transition-colors"
-              aria-label={modelsOpen ? 'Fechar modelos' : 'Abrir modelos'}
-            >
-              {modelsOpen ? <ChevronUp size={14} className="text-text-secondary" /> : <ChevronDown size={14} className="text-text-secondary" />}
-            </button>
+      {/* Filtros de família de modelo */}
+      {!hideDiffusionSelector && (
+        <div>
+          <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+            Modelo de Difusão
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {MODEL_IDS.map((id) => {
+              const prof = MODEL_PROFILES[id]
+              const isSelected = diffusionModel === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onDiffusionModelChange(id)}
+                  className={`
+                    flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all duration-200 group
+                    ${isSelected
+                      ? 'border-accent bg-accent/5 text-text-primary shadow-lg shadow-accent/5'
+                      : 'border-border bg-surface hover:border-text-muted text-text-secondary'
+                    }
+                  `}
+                >
+                  <span className={`text-xs font-bold transition-colors ${isSelected ? 'text-accent' : 'text-text-primary group-hover:text-text-primary'}`}>
+                    {prof.label}
+                  </span>
+                  <span className="text-[9px] text-text-muted mt-1 leading-tight line-clamp-2">
+                    {id === 'anima' ? 'Anime HD' : id === 'krea2' ? 'Turbo Rápido' : id === 'qwen-image' ? 'Edição 2.1' : 'GGUF Flux'}
+                  </span>
+                </button>
+              )
+            })}
           </div>
+        </div>
+      )}
+
+      {/* Checkpoint (UNET) */}
+      <div className="mt-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Checkpoint (UNET)</h3>
+          <button
+            type="button"
+            onClick={() => setModelsOpen((o) => !o)}
+            className="p-1 rounded hover:bg-surface-tertiary transition-colors"
+            aria-label={modelsOpen ? 'Fechar modelos' : 'Abrir modelos'}
+          >
+            {modelsOpen ? <ChevronUp size={14} className="text-text-secondary" /> : <ChevronDown size={14} className="text-text-secondary" />}
+          </button>
+        </div>
           <button
             type="button"
             onClick={() => setModelsOpen((o) => !o)}
@@ -271,7 +303,6 @@ export function ModelSidebar({
                         type="button"
                         onClick={() => {
                           onModelChange(model.name)
-                          onDiffusionModelChange(model.type === 'diffusion_models' ? 'anima' : model.type === 'checkpoints' ? 'krea2' : 'qwen-image')
                           setModelsOpen(false)
                         }}
                         title={displayName}
@@ -300,8 +331,7 @@ export function ModelSidebar({
               )}
             </div>
           )}
-        </div>
-      )}
+      </div>
 
       {/* LoRAs */}
       <div className="mt-4 space-y-2">

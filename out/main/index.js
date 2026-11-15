@@ -84,6 +84,8 @@ function parseTags(raw) {
       } else {
         elements.hair.styles.push(tag);
       }
+    } else if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
+      elements.pose.orientation.push(tag);
     } else if (/sad|sorrow|unhappy|lonely|happy|joy|delight|excit|surpris|shock|scare|afraid|fear|nervous|anxious|embarrass|shy|timid|bored|tired|sleepy|drowsy|calm|relaxed|neutral|expressionless|blank stare|seduct|allur|teasing|playful|cheerful|smile|smiling|laugh|giggle|grin|smirk|smug|frown|pout|pursed lips|open mouth|mouth open|parted lips|closed mouth|:d|tongue out|licking|lip bite|biting lip|wink|one eye closed|eyes closed|closed eyes|half-closed|narrowed|wide eyes|sparkling|shining eyes|wet eyes|cry|crying|sob|tear|sweat|sweatdrop|drool|saliva|blush|angry|annoyed|irritat|serious|stern|confident|defiant|determined|dazed|confus|distract|jealous|worried|eyebrow|furrowed|raised brow|scowl|glare|tongue|gaze|looking|glance|stare|facing|head (down|up|tilt)|side profile/i.test(tag) && !/view|angle|focus|shot|portrait|full body|upper body|lower body|cowboy/i.test(tag)) {
       if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
         elements.pose.orientation.push(tag);
@@ -98,13 +100,13 @@ function parseTags(raw) {
       }
     } else if (/\bglasses\b|\beyepatch\b|\bmask\b|\bearrings?\b|\bhorns?\b|\bears?\b|\banimal ears\b|\bcat ears\b|\bfox ears\b|\bfangs?\b|\bmakeup\b|\blipstick\b|\bdelicate\b|\byouthful\b/i.test(tag) && !/hair/i.test(tag)) {
       elements.face.push(tag);
-    } else if (/breast|bust|boob|nipple|perky|\bfirm\b|flat chest|oppai|cleavage|sideboob|deep v|plunge/i.test(tag) && !/band|seam|trim|fringe|ruffle|cup\b|panel|bodice|bodysuit|bikini|neckline|collar|halter|neck\b|strap|tie|lace/i.test(tag)) {
+    } else if (/breast|bust|boob|nipple|perky|\bfirm\b|flat chest|oppai|cleavage|sideboob|deep v|plunge|\bthighs?\b/i.test(tag) && !/band|seam|trim|fringe|ruffle|cup\b|panel|bodice|bodysuit|bikini|neckline|collar|halter|neck\b|strap|tie|lace/i.test(tag)) {
       elements.body.push(tag);
     } else if (/bikini|swimsuit|swimwear|one.?piece|monokini|tankini|microkini|brazilian|tie.?side|halter|teardrop|push.?up|underwire|belted|corset|criss.?cross|cross.?over|ruffle|fringe|bandeau|asymmetr|one.?shoulder|bodysuit|lingerie|negligee|leotard|bunny.?suit|race queen|uniform|school uniform|serafuku|suit|dress|kimono|yukata|costume|outfit|bodice|jumpsuit|playsuit/i.test(tag)) {
       elements.clothing.overall.push(tag);
     } else if (/jacket|coat|hoodie|shirt|t-shirt|\btee\b|blouse|sweater|cardigan|vest|tank|crop|halter|tube|camisole|\bbra\b|sports bra|swim top|bikini top|bandeau|strapless|racerback|push.?up|underwire|padded|molded|triangle|teardrop|sweetheart|keyhole|cutout|plunge|deep v|corset|bustier|collar|turtleneck|neckline|neck\b|cleavage|choker|\btop\b|cups?|armor|chestplate|breastplate|spaghetti|straps?|strings?|ties?|bows?|knots?|lace.?up|lacing|harness/i.test(tag) && !/thigh|leg\b|legs\b|knee|ankle|foot|boot|bottom|briefs|panties|panty|skirt|pants?\b/i.test(tag)) {
       elements.clothing.top.push(tag);
-    } else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
+    } else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
       elements.clothing.bottom.push(tag);
     } else if (/footwear|glove|fingerless|boots|knee boots|shoes|sneakers|heels|belt|buckles?|thigh straps|socks|thighhighs|kneehighs|jewelry|bracelet|necklace|cape|cloak|hat|cap|headband/i.test(tag)) {
       elements.clothing.accessories.push(tag);
@@ -203,7 +205,7 @@ function synthesizeDescriptiveCaption(raw) {
   const envBrief = el.scenery.background.length > 0 ? el.scenery.background.slice(0, 2).join(" or ") : el.scenery.environment.length > 0 ? el.scenery.environment[0] : "atmospheric setting";
   const angleBrief = el.camera.angle.length > 0 ? `captured from a ${el.camera.angle[0]}` : el.camera.shotType.length > 0 ? `framed in a ${el.camera.shotType[0]}` : "";
   const angleClause = angleBrief ? `, ${angleBrief}` : "";
-  const subjectCountLock = isSolo ? "solo, single character, alone in frame (exactly ONE person, no second person, no crowd, no duplicate)" : "";
+  const subjectCountLock = isSolo ? "solo" : "";
   const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? "multiple characters";
   const countWords = /2girls|2boys|couple/i.test(countDetail) ? "TWO" : /3girls|3boys/i.test(countDetail) ? "THREE" : /4girls/i.test(countDetail) ? "FOUR" : null;
   const isMulti = isMultiple || isMultipleGenders;
@@ -232,19 +234,17 @@ function synthesizeDescriptiveCaption(raw) {
     const hairStyles = el.hair.styles.length > 0 ? ` styled in ${el.hair.styles.join(", ")}` : "";
     const hairFeatures = el.hair.features.length > 0 ? `, with ${el.hair.features.join(" and ")}` : "";
     const hairFull = `${hairColorsClean}${hairStyles}${hairFeatures}`;
-    const eyeColorsClean = el.eyes.colors.length > 0 ? el.eyes.colors.map((c) => c.replace(/\s*eyes?$/i, "")).join(" and ") : "expressive";
+    const hasEyeColor = el.eyes.colors.length > 0;
+    const eyeColorsClean = hasEyeColor ? el.eyes.colors.map((c) => c.replace(/\s*eyes?$/i, "")).join(" and ") : "";
     const eyeFeaturesClean = el.eyes.features.length > 0 ? `, with ${el.eyes.features.map((f) => f.replace(/\s*eyes?$/i, "")).join(", ")}` : ", capturing a distinct glint in the center";
-    const eyesFull = `${eyeColorsClean} eyes${eyeFeaturesClean}`;
+    const eyesFull = hasEyeColor ? `${eyeColorsClean} eyes${eyeFeaturesClean}` : `expressive${eyeFeaturesClean}`;
     const faceFeatures = el.face.length > 0 ? ` The character features ${el.face.join(", ")}, giving a distinct personality.` : ` The character has a youthful face with delicate features.`;
     sections.push(`Appearance: The character has ${skinDesc} and ${hairFull}. ${capitalize(possessive)} eyes are ${eyesFull}.${faceFeatures}`);
     if (el.body.length > 0) {
       sections.push(`Figure: ${capitalize(el.body.join(", "))}.`);
     }
-    const clothingParts = [
-      ...el.clothing.overall,
-      ...el.clothing.top,
-      ...el.clothing.bottom
-    ];
+    const hasOverall = el.clothing.overall.length > 0;
+    const clothingParts = hasOverall ? [...el.clothing.overall] : [...el.clothing.top, ...el.clothing.bottom];
     if (clothingParts.length > 0) {
       const outfitLiteral = clothingParts.join(", ");
       const outfitWithArticle = /^(a|an|the)\s/i.test(outfitLiteral) ? outfitLiteral : `a ${outfitLiteral}`;
@@ -255,10 +255,10 @@ function synthesizeDescriptiveCaption(raw) {
     } else {
       sections.push(`Clothing: no distinct outfit details detected.`);
     }
-    if (el.clothing.top.length > 0) {
+    if (hasOverall && el.clothing.top.length > 0) {
       sections.push(`Top: ${capitalize(el.clothing.top.join(", "))}.`);
     }
-    if (el.clothing.bottom.length > 0) {
+    if (hasOverall && el.clothing.bottom.length > 0) {
       sections.push(`Bottom: ${capitalize(el.clothing.bottom.join(", "))}.`);
     }
     if (el.clothing.accessories.length > 0) {
@@ -267,7 +267,10 @@ function synthesizeDescriptiveCaption(raw) {
     }
     const cameraIsBehind = el.camera.angle.some((a) => /behind|rear|back|over.?shoulder/i.test(a));
     const defaultOrient = cameraIsBehind ? `, with ${possessive} back turned to the viewer` : "";
-    const poseOrient = el.pose.orientation.length > 0 ? el.pose.orientation.join(", ") : "";
+    const isGaze = (o) => /looking|gaze|glance|stare|facing (viewer|forward)/i.test(o);
+    const gazeCues = el.pose.orientation.filter(isGaze);
+    const bodyOrientCues = el.pose.orientation.filter((o) => !isGaze(o));
+    const poseOrient = bodyOrientCues.length > 0 ? bodyOrientCues.join(", ") : "";
     const limbsLower = el.pose.limbs.map((l) => l.toLowerCase());
     const has = (re) => limbsLower.some((l) => re.test(l));
     const mechanics = [];
@@ -332,7 +335,9 @@ function synthesizeDescriptiveCaption(raw) {
     }
     const literalLeftovers = el.pose.limbs.filter((l) => {
       const ll = l.toLowerCase();
-      return !/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll);
+      if (/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll)) return false;
+      if (/^(knees?|elbows?|thighs?|shoulders?|arms?|legs?|hands?|fingers?|toes?|hips?|chest|waist|neck|torso)\b/.test(ll)) return false;
+      return true;
     });
     for (const left of literalLeftovers.slice(0, 2)) {
       mechanics.push(left);
@@ -354,15 +359,13 @@ function synthesizeDescriptiveCaption(raw) {
     const eyeEmotionCues = el.eyes.features.filter(
       (f) => /closed|wink|half|narrow|wide|sparkl|shining|wet|cry|tear|glint|half-closed|one eye/i.test(f)
     );
-    const gazeCues = el.pose.orientation.filter(
-      (o) => /looking|gaze|glance|stare|facing|over shoulder|head (down|up|tilt)/i.test(o)
-    );
     const expressionParts = [...el.expression, ...eyeEmotionCues];
+    const gazeCuesUsed = gazeCues;
     if (expressionParts.length > 0) {
-      const gazePart = gazeCues.length > 0 ? `, with ${formatList(gazeCues)}` : "";
+      const gazePart = gazeCuesUsed.length > 0 ? `, with ${formatList(gazeCuesUsed)}` : "";
       sections.push(`Expression: An expression of ${formatList(expressionParts)}${gazePart}, communicating emotional depth and intent.`);
-    } else if (gazeCues.length > 0) {
-      sections.push(`Expression: A neutral relaxed expression, with ${formatList(gazeCues)}, conveying calm presence.`);
+    } else if (gazeCuesUsed.length > 0) {
+      sections.push(`Expression: A neutral relaxed expression, with ${formatList(gazeCuesUsed)}, conveying calm presence.`);
     } else {
       sections.push(`Expression: A neutral relaxed expression with soft gaze toward the viewer, conveying calm presence.`);
     }

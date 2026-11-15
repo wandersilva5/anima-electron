@@ -141,6 +141,11 @@ export function parseTags(raw: string): ParsedVisualElements {
         elements.hair.styles.push(tag)
       }
     }
+    // Orientation / gaze — CHEGADO ANTES de expression: a exclusão de câmera
+    // ("view") descartava "looking at viewer" e a tag sumia da descrição.
+    else if (/looking at viewer|looking away|looking back|looking over|looking down|looking up|looking (to the )?side|over shoulder|glance back|head (down|up|tilt)|facing (viewer|forward|away)|turned away|side profile/i.test(tag)) {
+      elements.pose.orientation.push(tag)
+    }
     // Expression / gaze — CHECADO ANTES de eyes/face para não perder
     // "crying with eyes closed", "closed eyes", "wink", "happy", "sad",
     // "surprised", "pout", etc. Guarda anti-roubo: tag de câmera
@@ -171,7 +176,7 @@ export function parseTags(raw: string): ParsedVisualElements {
     // Body / Bust — preserva "seios firmes/leves", tamanho e colo.
     // Checado ANTES de roupa para nunca se perder em uncategorized.
     // (Detalhe de construção como "underbust band / seam / trim" continua sendo roupa.)
-    else if (/breast|bust|boob|nipple|perky|\bfirm\b|flat chest|oppai|cleavage|sideboob|deep v|plunge/i.test(tag) && !/band|seam|trim|fringe|ruffle|cup\b|panel|bodice|bodysuit|bikini|neckline|collar|halter|neck\b|strap|tie|lace/i.test(tag)) {
+    else if (/breast|bust|boob|nipple|perky|\bfirm\b|flat chest|oppai|cleavage|sideboob|deep v|plunge|\bthighs?\b/i.test(tag) && !/band|seam|trim|fringe|ruffle|cup\b|panel|bodice|bodysuit|bikini|neckline|collar|halter|neck\b|strap|tie|lace/i.test(tag)) {
       elements.body.push(tag)
     }
     // Clothing: Overall — peça única / conjunto. Checado ANTES de top/bottom
@@ -192,7 +197,7 @@ export function parseTags(raw: string): ParsedVisualElements {
     // Clothing: Bottom — inclui íntima inferior, modelagem e cavas.
     // Guarda anti-roubo: tag de POSE que menciona coxa ("elbows on thighs",
     // "hands on thighs") começa com membro superior — desce para pose.limbs.
-    else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
+    else if (/skirt|miniskirt|pleated|pants|trousers|shorts|jeans|leggings|tights|panties|\bpanty\b|briefs|thong|bloomers|hakama|bikini bottom|swim bottom|low.?rise|high.?cut|high.?waisted|cheeky|side.?tie|front.?tie|revealing legs|bare legs|bare thighs|leg openings|hips|rear coverage|pantyhose|stockings|\bbottoms?\b/i.test(tag) && !/^(elbows?|hands?|arms?)\b/i.test(tag)) {
       elements.clothing.bottom.push(tag)
     }
     // Clothing: Accessories & Footwear — ANTES do catch-all ("footwear"
@@ -382,9 +387,7 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   // que quebraria referências com 2+ personagens, ex.: duas meninas se
   // beijando). Redundância intencional: difusão duplica a personagem se o
   // singular vier apenas do artigo "a".
-  const subjectCountLock = isSolo
-    ? 'solo, single character, alone in frame (exactly ONE person, no second person, no crowd, no duplicate)'
-    : ''
+  const subjectCountLock = isSolo ? 'solo' : ''
   // Contagem exata para múltiplos: "2girls" → TWO, "couple" → TWO, etc.
   const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? 'multiple characters'
   const countWords = /2girls|2boys|couple/i.test(countDetail)
@@ -433,13 +436,16 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     const hairFeatures = el.hair.features.length > 0 ? `, with ${el.hair.features.join(' and ')}` : ''
     const hairFull = `${hairColorsClean}${hairStyles}${hairFeatures}`
 
-    const eyeColorsClean = el.eyes.colors.length > 0
+    const hasEyeColor = el.eyes.colors.length > 0
+    const eyeColorsClean = hasEyeColor
       ? el.eyes.colors.map((c) => c.replace(/\s*eyes?$/i, '')).join(' and ')
-      : 'expressive'
+      : ''
     const eyeFeaturesClean = el.eyes.features.length > 0
       ? `, with ${el.eyes.features.map((f) => f.replace(/\s*eyes?$/i, '')).join(', ')}`
       : ', capturing a distinct glint in the center'
-    const eyesFull = `${eyeColorsClean} eyes${eyeFeaturesClean}`
+    const eyesFull = hasEyeColor
+      ? `${eyeColorsClean} eyes${eyeFeaturesClean}`
+      : `expressive${eyeFeaturesClean}`
 
     const faceFeatures = el.face.length > 0
       ? ` The character features ${el.face.join(', ')}, giving a distinct personality.`
@@ -455,11 +461,12 @@ export function synthesizeDescriptiveCaption(raw: string): string {
 
     // Clothing — fiel às tags, sem inventar peça. Prioridade: overall (ex.: bikini)
     // > top+bottom combinados > peça avulsa. Sem fallback genérico.
-    const clothingParts: string[] = [
-      ...el.clothing.overall,
-      ...el.clothing.top,
-      ...el.clothing.bottom
-    ]
+    // Cada tag de roupa aparece UMA vez: quando não há peça "overall",
+    // Clothing resume top+bottom e as linhas Top/Bottom são omitidas.
+    const hasOverall = el.clothing.overall.length > 0
+    const clothingParts: string[] = hasOverall
+      ? [...el.clothing.overall]
+      : [...el.clothing.top, ...el.clothing.bottom]
     if (clothingParts.length > 0) {
       const outfitLiteral = clothingParts.join(', ')
       const outfitWithArticle = /^(a|an|the)\s/i.test(outfitLiteral) ? outfitLiteral : `a ${outfitLiteral}`
@@ -472,10 +479,10 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     }
 
     // Top / Bottom — só quando detectados; nunca inventar
-    if (el.clothing.top.length > 0) {
+    if (hasOverall && el.clothing.top.length > 0) {
       sections.push(`Top: ${capitalize(el.clothing.top.join(', '))}.`)
     }
-    if (el.clothing.bottom.length > 0) {
+    if (hasOverall && el.clothing.bottom.length > 0) {
       sections.push(`Bottom: ${capitalize(el.clothing.bottom.join(', '))}.`)
     }
 
@@ -493,7 +500,12 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     const defaultOrient = cameraIsBehind
       ? `, with ${possessive} back turned to the viewer`
       : ''
-    const poseOrient = el.pose.orientation.length > 0 ? el.pose.orientation.join(', ') : ''
+    // Direção do olhar (gaze) e orientação corporal não podem aparecer nos
+    // dois campos — senão a mesma tag sai repetida em Pose e em Expression.
+    const isGaze = (o: string): boolean => /looking|gaze|glance|stare|facing (viewer|forward)/i.test(o)
+    const gazeCues = el.pose.orientation.filter(isGaze)
+    const bodyOrientCues = el.pose.orientation.filter((o) => !isGaze(o))
+    const poseOrient = bodyOrientCues.length > 0 ? bodyOrientCues.join(', ') : ''
     const limbsLower = el.pose.limbs.map((l) => l.toLowerCase())
     const has = (re: RegExp) => limbsLower.some((l) => re.test(l))
     const mechanics: string[] = []
@@ -558,7 +570,11 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     }
     const literalLeftovers = el.pose.limbs.filter((l) => {
       const ll = l.toLowerCase()
-      return !/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll)
+      if (/stand|sit|kneel|crouch|squat|lying|lie\b|lean|bend|arms up|raised|hands on hips|hands? in pockets?|hands? together|clasped|interlocked|hand on|waving|arms behind|spread legs|legs apart|feet apart|feet together|knees? together|knees? apart|elbows? on|arch|twist|contrapposto|crossed|cross-legged|leg up|one leg|walk|run|jump|stretch|reaching|lift\b/.test(ll)) return false
+      // Partes do corpo soltas (ex.: "knees", "shoulders") não descrevem pose
+      // e poluem a frase como "standing upright with balanced weight, knees".
+      if (/^(knees?|elbows?|thighs?|shoulders?|arms?|legs?|hands?|fingers?|toes?|hips?|chest|waist|neck|torso)\b/.test(ll)) return false
+      return true
     })
     for (const left of literalLeftovers.slice(0, 2)) {
       mechanics.push(left)
@@ -586,15 +602,13 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     const eyeEmotionCues = el.eyes.features.filter((f) =>
       /closed|wink|half|narrow|wide|sparkl|shining|wet|cry|tear|glint|half-closed|one eye/i.test(f)
     )
-    const gazeCues = el.pose.orientation.filter((o) =>
-      /looking|gaze|glance|stare|facing|over shoulder|head (down|up|tilt)/i.test(o)
-    )
     const expressionParts = [...el.expression, ...eyeEmotionCues]
+    const gazeCuesUsed = gazeCues
     if (expressionParts.length > 0) {
-      const gazePart = gazeCues.length > 0 ? `, with ${formatList(gazeCues)}` : ''
+      const gazePart = gazeCuesUsed.length > 0 ? `, with ${formatList(gazeCuesUsed)}` : ''
       sections.push(`Expression: An expression of ${formatList(expressionParts)}${gazePart}, communicating emotional depth and intent.`)
-    } else if (gazeCues.length > 0) {
-      sections.push(`Expression: A neutral relaxed expression, with ${formatList(gazeCues)}, conveying calm presence.`)
+    } else if (gazeCuesUsed.length > 0) {
+      sections.push(`Expression: A neutral relaxed expression, with ${formatList(gazeCuesUsed)}, conveying calm presence.`)
     } else {
       sections.push(`Expression: A neutral relaxed expression with soft gaze toward the viewer, conveying calm presence.`)
     }

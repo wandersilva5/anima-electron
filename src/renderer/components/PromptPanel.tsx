@@ -40,6 +40,7 @@ export function PromptPanel() {
           onLoraStrengthChange={params.setLoraStrength}
           onReorderLoras={params.reorderLora}
           refreshLorasFn={refreshLoras}
+          compactLoraArea
         />
 
         <div>
