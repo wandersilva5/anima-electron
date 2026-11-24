@@ -33,6 +33,9 @@ function isAlreadyNaturalLanguage(text) {
   }
   const segments = trimmed.split(/[,;\n]+/).filter(Boolean);
   const words = trimmed.split(/\s+/).filter(Boolean);
+  if (segments.length < 3 && words.length >= 6) {
+    return true;
+  }
   if (words.length > 25 && segments.length < words.length * 0.15) {
     return true;
   }
@@ -157,7 +160,7 @@ function capitalize(s) {
 function synthesizeDescriptiveCaption(raw) {
   if (!raw || !raw.trim()) return "";
   if (isAlreadyNaturalLanguage(raw)) {
-    return ensureSubjectCountLock(raw.trim());
+    return raw.trim();
   }
   const el = parseTags(raw);
   const isFemale = el.subject.includes("female") || el.subject.some((s) => /girl|woman|waifu/i.test(s));
@@ -211,8 +214,6 @@ function synthesizeDescriptiveCaption(raw) {
   const isMulti = isMultiple || isMultipleGenders;
   const effCountDetail = isMultipleGenders && !isMultiple ? "couple (male + female)" : countDetail;
   const effCountWords = isMultipleGenders && !isMultiple ? "TWO" : countWords;
-  const effPeopleWords = effCountWords === "TWO" ? "two people" : effCountWords === null ? "people" : effCountWords.toLowerCase() + " people";
-  const effMultipleLock = effCountWords ? "exactly " + effCountWords + " characters (" + effCountDetail + "), " + effPeopleWords + " in frame — keep this exact count, no more, no fewer, no extra people" : "multiple characters (" + effCountDetail + ") — keep this exact character count and arrangement, no extra people beyond those described";
   let intro = "";
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`;
@@ -225,9 +226,9 @@ function synthesizeDescriptiveCaption(raw) {
   if (!isNoHumans) {
     sections.push("Character:");
     if (isSolo) {
-      sections.push("Subject Count: Solo — exactly ONE character in frame, single subject centered; no second person, no crowd, no duplicate.");
+      sections.push("Subject Count: 1 (solo).");
     } else if (isMulti) {
-      sections.push("Subject Count: " + (effCountWords ? effCountWords + " (" + effCountDetail + ")" : "Multiple (" + effCountDetail + ")") + " — " + effMultipleLock + ".");
+      sections.push("Subject Count: " + (effCountWords ? effCountWords : "Multiple") + " (" + effCountDetail + ").");
     }
     const skinDesc = el.skin.length > 0 ? el.skin.join(", ") : "fair skin";
     const hairColorsClean = el.hair.colors.length > 0 ? el.hair.colors.map((c) => c.replace(/\s*hair$/i, "")).join(" and ") + " hair" : "dark hair";
@@ -426,17 +427,6 @@ function synthesizeDescriptiveCaption(raw) {
     sections.push(`Composition: The main subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`);
   }
   return sections.join("\n");
-}
-function ensureSubjectCountLock(text) {
-  const t = text.trim();
-  if (!t) return "";
-  if (/no humans|no person|empty scene|no character/i.test(t)) return t;
-  if (/\bsolo\b|\bsingle\b|\balone in frame\b|\bonly one\b|\bexactly one\b|\b1girl\b|\b1boy\b|\bmultiple\b|\btwo\b|\bthree\b|\bcouple\b|\bgroup\b|\bcrowd\b|\b2girls\b|\b3girls\b|\b2boys\b/i.test(t)) {
-    return t;
-  }
-  return `${t}
-Subject Count: keep the exact same number of characters as the reference image — if it shows a single character, render only ONE person, solo and alone in frame, no second person, no crowd, no duplicate.
-Pose: match the reference image pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.`;
 }
 function extractAnyString(obj, depth = 0) {
   if (depth > 5) return null;

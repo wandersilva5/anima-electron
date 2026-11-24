@@ -505,7 +505,7 @@ export function RecreateTab() {
                   <Sparkles size={10} className="text-accent shrink-0" />
                   <span className="text-[10px] text-text-muted">
                     {captionMode === 'descriptive'
-                      ? 'Confira o "Subject Count" (solo = 1 personagem). Ajuste se a quantidade estiver errada.'
+                      ? 'Confira o "Subject Count" (1 = solo). Ajuste se a quantidade estiver errada.'
                       : 'Confira se começa com "solo" (1 personagem) ou a contagem certa. Ajuste se necessário.'}
                   </span>
                 </div>

@@ -73,6 +73,11 @@ export function isAlreadyNaturalLanguage(text: string): boolean {
   // Se tiver frases longas sem excesso de vírgulas
   const segments = trimmed.split(/[,;\n]+/).filter(Boolean)
   const words = trimmed.split(/\s+/).filter(Boolean)
+  // Poucos segmentos com várias palavras = prosa (ex.: VLM curto). Sem isso a
+  // frase era comida como lista de tags e virava texto sem sentido.
+  if (segments.length < 3 && words.length >= 6) {
+    return true
+  }
   if (words.length > 25 && segments.length < words.length * 0.15) {
     return true
   }
@@ -308,11 +313,10 @@ function capitalize(s: string): string {
 export function synthesizeDescriptiveCaption(raw: string): string {
   if (!raw || !raw.trim()) return ''
 
-  // Se já for linguagem natural ou possuir as seções, garante a trava de
-  // contagem (principal causa de duplicação na recriação: VLM descreve sem
-  // dizer "uma personagem só" e o modelo gera duas).
+  // Caption que já vem em linguagem natural (VLM) é repassada como está:
+  // não há mais reforço de contagem de personagens.
   if (isAlreadyNaturalLanguage(raw)) {
-    return ensureSubjectCountLock(raw.trim())
+    return raw.trim()
   }
 
   const el = parseTags(raw)
@@ -404,10 +408,6 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   const isMulti = isMultiple || isMultipleGenders
   const effCountDetail = isMultipleGenders && !isMultiple ? 'couple (male + female)' : countDetail
   const effCountWords: string | null = isMultipleGenders && !isMultiple ? 'TWO' : countWords
-  const effPeopleWords = effCountWords === 'TWO' ? 'two people' : effCountWords === null ? 'people' : effCountWords.toLowerCase() + ' people'
-  const effMultipleLock = effCountWords
-    ? 'exactly ' + effCountWords + ' characters (' + effCountDetail + '), ' + effPeopleWords + ' in frame — keep this exact count, no more, no fewer, no extra people'
-    : 'multiple characters (' + effCountDetail + ') — keep this exact character count and arrangement, no extra people beyond those described'
   let intro = ''
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`
@@ -422,12 +422,12 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   // 2. Seção Character (se houver personagem)
   if (!isNoHumans) {
     sections.push('Character:')
-    // Trava explícita de contagem logo no topo da seção — o ponto que o
-    // usuário edita antes de recriar, então precisa estar visível aqui.
+    // Contagem como informação factual (sem instrução de "forçar" a
+    // quantidade) — o ponto que o usuário edita antes de recriar.
     if (isSolo) {
-      sections.push('Subject Count: Solo — exactly ONE character in frame, single subject centered; no second person, no crowd, no duplicate.')
+      sections.push('Subject Count: 1 (solo).')
     } else if (isMulti) {
-      sections.push('Subject Count: ' + (effCountWords ? effCountWords + ' (' + effCountDetail + ')' : 'Multiple (' + effCountDetail + ')') + ' — ' + effMultipleLock + '.')
+      sections.push('Subject Count: ' + (effCountWords ? effCountWords : 'Multiple') + ' (' + effCountDetail + ').')
     }
 
     // Appearance
@@ -688,21 +688,4 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   }
 
   return sections.join('\n')
-}
-
-/**
- * Garante travas de fidelidade em captions já em linguagem natural (VLM como
- * Florence2/JoyCaption): se o texto não menciona quantidade, anexa a
- * instrução de manter o mesmo número de personagens — com padrão solo,
- * que é o caso mais comum da aba Recriar e o que mais duplica — e a
- * instrução de manter a pose, que o VLM costuma descrever de forma vaga.
- */
-export function ensureSubjectCountLock(text: string): string {
-  const t = text.trim()
-  if (!t) return ''
-  if (/no humans|no person|empty scene|no character/i.test(t)) return t
-  if (/\bsolo\b|\bsingle\b|\balone in frame\b|\bonly one\b|\bexactly one\b|\b1girl\b|\b1boy\b|\bmultiple\b|\btwo\b|\bthree\b|\bcouple\b|\bgroup\b|\bcrowd\b|\b2girls\b|\b3girls\b|\b2boys\b/i.test(t)) {
-    return t
-  }
-  return `${t}\nSubject Count: keep the exact same number of characters as the reference image — if it shows a single character, render only ONE person, solo and alone in frame, no second person, no crowd, no duplicate.\nPose: match the reference image pose exactly — same posture, same limb positions, same facing; do not change or reinterpret the pose.`
 }
