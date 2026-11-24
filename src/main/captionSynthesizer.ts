@@ -249,7 +249,10 @@ export function parseTags(raw: string): ParsedVisualElements {
     // Camera Angle — inclui visão de costas / por trás / sobre o ombro
     else if (/(low angle|high angle|dutch angle|straight-on|eye level|from below|from above|from behind|from back|behind view|rear view|back view|over.?shoulder|birds eye|worms eye|overhead|front view|side view|three-quarter view|profile view|tilted angle|diagonal angle)/i.test(tag) ||
       /^(angle|view)$/i.test(tag)) {
-      elements.camera.angle.push(tag)
+      // Guarda só a parte que é ângulo: a tag completa pode vir suja
+      // (ex.: "sex from behind") e virava "captured from a sex from behind".
+      const matched = tag.match(/(low angle|high angle|dutch angle|straight-on|eye level|from below|from above|from behind|from back|behind view|rear view|back view|over.?shoulder|birds eye|worms eye|overhead|front view|side view|three-quarter view|profile view|tilted angle|diagonal angle)/i)
+      elements.camera.angle.push(matched ? matched[0].toLowerCase() : tag)
     }
     // Shot Type / Framing — inclui enquadramento baixo / foco nas costas
     else if (/^(close-up|portrait|upper body|lower body|cowboy shot|full body|wide shot|wide view|medium shot|extreme close-up|cut-in|butt focus|ass focus|back focus|rear focus)$/i.test(tag) ||
@@ -377,17 +380,17 @@ export function synthesizeDescriptiveCaption(raw: string): string {
       : 'atmospheric setting'
 
   const angleBrief = el.camera.angle.length > 0
-    ? `captured from a ${el.camera.angle[0]}`
+    ? (/^from\b/i.test(el.camera.angle[0])
+      ? `captured ${el.camera.angle[0]}`
+      : `captured from a ${el.camera.angle[0]}`)
     : el.camera.shotType.length > 0
       ? `framed in a ${el.camera.shotType[0]}`
       : ''
   const angleClause = angleBrief ? `, ${angleBrief}` : ''
 
-  // Header — a contagem é persistida no prompt POSITIVO (nunca no negativo,
-  // que quebraria referências com 2+ personagens, ex.: duas meninas se
-  // beijando). Redundância intencional: difusão duplica a personagem se o
-  // singular vier apenas do artigo "a".
-  const subjectCountLock = isSolo ? 'solo' : ''
+  // Header — a contagem de personagens NÃO vai aqui: ela fica somente na
+  // seção "Subject Count:" (logo abaixo), para não repetir a mesma
+  // informação duas vezes no prompt.
   // Contagem exata para múltiplos: "2girls" → TWO, "couple" → TWO, etc.
   const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? 'multiple characters'
   const countWords = /2girls|2boys|couple/i.test(countDetail)
@@ -409,9 +412,9 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`
   } else if (isMulti) {
-    intro = `The image depicts ${styleStr} characters, ${effMultipleLock}, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`
+    intro = `The image depicts ${styleStr} characters, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`
   } else {
-    intro = `The image depicts a single ${genderStr} ${styleStr} character, ${subjectCountLock}, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`
+    intro = `The image depicts a single ${genderStr} ${styleStr} character, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`
   }
 
   const sections: string[] = [intro, '']
@@ -645,14 +648,14 @@ export function synthesizeDescriptiveCaption(raw: string): string {
     sections.push(`Colors: Harmonious color tones predominate across the scene, creating balanced contrast between the subject and the ambient environment.`)
   }
 
-  // Camera Angle
-  if (el.camera.angle.length > 0) {
-    const angleText = formatList(el.camera.angle)
-    if (/from behind|behind|rear|back view|back\b/i.test(angleText) && !/front|side|three-quarter|profile/i.test(angleText)) {
-      sections.push(`Camera Angle: Positioned behind the subject at a ${angleText}, capturing her back and lifted butt with depth and volume.`)
-    } else if (/over.?shoulder/i.test(angleText)) {
-      sections.push(`Camera Angle: Positioned at a ${angleText}, framing her as she looks back over her shoulder toward the viewer.`)
-    } else if (/low|below|worms/i.test(angleText)) {
+    // Camera Angle
+    if (el.camera.angle.length > 0) {
+      const angleText = formatList(el.camera.angle)
+      if (/from behind|behind|rear|back view|back\b/i.test(angleText) && !/front|side|three-quarter|profile/i.test(angleText)) {
+        sections.push(`Camera Angle: Positioned behind the subject, capturing her back and lifted butt with depth and volume.`)
+      } else if (/over.?shoulder/i.test(angleText)) {
+        sections.push(`Camera Angle: Positioned over her shoulder, framing her as she looks back over it toward the viewer.`)
+      } else if (/low|below|worms/i.test(angleText)) {
       sections.push(`Camera Angle: Positioned at a ${angleText}, looking upward toward the subject to accentuate a powerful, imposing, and dominant perspective.`)
     } else if (/high|above|birds|overhead/i.test(angleText)) {
       sections.push(`Camera Angle: Positioned at a ${angleText}, looking down across the subject to provide comprehensive depth and scale.`)
@@ -677,9 +680,9 @@ export function synthesizeDescriptiveCaption(raw: string): string {
   } else if (compDetails) {
     sections.push(`Composition: Framed from a ${compDetails}, directing the viewer's gaze toward the focal center and creating a striking visual impression.`)
   } else if (isSolo) {
-    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, only one character in frame, no extra people, delivering a dynamic and impactful presentation.`)
+    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`)
   } else if (isMulti) {
-    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : 'multiple'} subjects share the center with balanced framing and depth, ${effMultipleLock}, delivering a dynamic and impactful presentation.`)
+    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : 'multiple'} subjects share the center with balanced framing and depth, delivering a dynamic and impactful presentation.`)
   } else {
     sections.push(`Composition: The main subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`)
   }

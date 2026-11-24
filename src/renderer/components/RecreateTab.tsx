@@ -180,7 +180,7 @@ export function RecreateTab() {
       const result = await window.electronAPI.comfyui.generateImprove({
         diffusionModel: selectedModel,
         prompt: captionText,
-        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cut, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, extra limbs, farry, amputated, large breasts, extra-large breasts, huge breasts',
+        negativePrompt: 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cut, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, signature, distorted body, deformed body, deformed arms, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, extra limbs, farry, amputated, large breasts, extra-large breasts, huge breasts',
         seed,
         steps: prof.defaults.steps,
         cfg: prof.defaults.cfg,

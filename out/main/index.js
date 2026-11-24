@@ -129,7 +129,8 @@ function parseTags(raw) {
     } else if (/(^|\s)(light|lighting|diffused|glowing|luminescence|neon|sunlight|moonlight|shadows?|backlighting|rim light|volumetric|ambient|contrast)($|\s)/i.test(tag) && !/sky|night|eyes?|hair|skin|clothes|clothing/i.test(tag)) {
       elements.scenery.lighting.push(tag);
     } else if (/(low angle|high angle|dutch angle|straight-on|eye level|from below|from above|from behind|from back|behind view|rear view|back view|over.?shoulder|birds eye|worms eye|overhead|front view|side view|three-quarter view|profile view|tilted angle|diagonal angle)/i.test(tag) || /^(angle|view)$/i.test(tag)) {
-      elements.camera.angle.push(tag);
+      const matched = tag.match(/(low angle|high angle|dutch angle|straight-on|eye level|from below|from above|from behind|from back|behind view|rear view|back view|over.?shoulder|birds eye|worms eye|overhead|front view|side view|three-quarter view|profile view|tilted angle|diagonal angle)/i);
+      elements.camera.angle.push(matched ? matched[0].toLowerCase() : tag);
     } else if (/^(close-up|portrait|upper body|lower body|cowboy shot|full body|wide shot|wide view|medium shot|extreme close-up|cut-in|butt focus|ass focus|back focus|rear focus)$/i.test(tag) || /(close-up|portrait|upper body|lower body|cowboy shot|full body|wide shot|medium shot|butt focus|ass focus|back focus|rear focus)/i.test(tag)) {
       elements.camera.shotType.push(tag);
     } else if (/perspective|depth of field|bokeh|focus|leading lines|centered|framing|rule of thirds|dynamic composition/i.test(tag)) {
@@ -203,9 +204,8 @@ function synthesizeDescriptiveCaption(raw) {
   const poseBrief = el.pose.general.length > 0 ? el.pose.general[0] : stanceWord ? `${attitudeWord} and ${stanceWord}` : `${attitudeWord} and expressive`;
   const poseNoun = poseBrief.toLowerCase().endsWith("pose") ? poseBrief : `${poseBrief} pose`;
   const envBrief = el.scenery.background.length > 0 ? el.scenery.background.slice(0, 2).join(" or ") : el.scenery.environment.length > 0 ? el.scenery.environment[0] : "atmospheric setting";
-  const angleBrief = el.camera.angle.length > 0 ? `captured from a ${el.camera.angle[0]}` : el.camera.shotType.length > 0 ? `framed in a ${el.camera.shotType[0]}` : "";
+  const angleBrief = el.camera.angle.length > 0 ? /^from\b/i.test(el.camera.angle[0]) ? `captured ${el.camera.angle[0]}` : `captured from a ${el.camera.angle[0]}` : el.camera.shotType.length > 0 ? `framed in a ${el.camera.shotType[0]}` : "";
   const angleClause = angleBrief ? `, ${angleBrief}` : "";
-  const subjectCountLock = isSolo ? "solo" : "";
   const countDetail = el.subject.find((s) => /multiple|group|couple|crowd|2girls|3girls|4girls|2boys|3boys|\d+\+/i.test(s)) ?? "multiple characters";
   const countWords = /2girls|2boys|couple/i.test(countDetail) ? "TWO" : /3girls|3boys/i.test(countDetail) ? "THREE" : /4girls/i.test(countDetail) ? "FOUR" : null;
   const isMulti = isMultiple || isMultipleGenders;
@@ -217,9 +217,9 @@ function synthesizeDescriptiveCaption(raw) {
   if (isNoHumans) {
     intro = `The image depicts an intricate ${styleStr} scene${angleClause}, in an environment that suggests ${envBrief}.`;
   } else if (isMulti) {
-    intro = `The image depicts ${styleStr} characters, ${effMultipleLock}, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`;
+    intro = `The image depicts ${styleStr} characters, in a ${poseNoun} composition${angleClause}, in a setting that suggests ${envBrief}.`;
   } else {
-    intro = `The image depicts a single ${genderStr} ${styleStr} character, ${subjectCountLock}, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`;
+    intro = `The image depicts a single ${genderStr} ${styleStr} character, in a ${poseNoun}${angleClause}, in a setting that suggests ${envBrief}.`;
   }
   const sections = [intro, ""];
   if (!isNoHumans) {
@@ -393,9 +393,9 @@ function synthesizeDescriptiveCaption(raw) {
   if (el.camera.angle.length > 0) {
     const angleText = formatList(el.camera.angle);
     if (/from behind|behind|rear|back view|back\b/i.test(angleText) && !/front|side|three-quarter|profile/i.test(angleText)) {
-      sections.push(`Camera Angle: Positioned behind the subject at a ${angleText}, capturing her back and lifted butt with depth and volume.`);
+      sections.push(`Camera Angle: Positioned behind the subject, capturing her back and lifted butt with depth and volume.`);
     } else if (/over.?shoulder/i.test(angleText)) {
-      sections.push(`Camera Angle: Positioned at a ${angleText}, framing her as she looks back over her shoulder toward the viewer.`);
+      sections.push(`Camera Angle: Positioned over her shoulder, framing her as she looks back over it toward the viewer.`);
     } else if (/low|below|worms/i.test(angleText)) {
       sections.push(`Camera Angle: Positioned at a ${angleText}, looking upward toward the subject to accentuate a powerful, imposing, and dominant perspective.`);
     } else if (/high|above|birds|overhead/i.test(angleText)) {
@@ -419,9 +419,9 @@ function synthesizeDescriptiveCaption(raw) {
   } else if (compDetails) {
     sections.push(`Composition: Framed from a ${compDetails}, directing the viewer's gaze toward the focal center and creating a striking visual impression.`);
   } else if (isSolo) {
-    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, only one character in frame, no extra people, delivering a dynamic and impactful presentation.`);
+    sections.push(`Composition: The single subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`);
   } else if (isMulti) {
-    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : "multiple"} subjects share the center with balanced framing and depth, ${effMultipleLock}, delivering a dynamic and impactful presentation.`);
+    sections.push(`Composition: The ${effCountWords ? effCountWords.toLowerCase() : "multiple"} subjects share the center with balanced framing and depth, delivering a dynamic and impactful presentation.`);
   } else {
     sections.push(`Composition: The main subject occupies the center with balanced framing and depth, delivering a dynamic and impactful presentation.`);
   }
