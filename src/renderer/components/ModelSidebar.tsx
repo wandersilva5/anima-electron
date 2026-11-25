@@ -1,7 +1,7 @@
 import { useState, memo } from 'react'
 import { useFilterModels } from '../hooks/useFilterModels'
 import { useRefreshLoras } from '../hooks/useRefreshLoras'
-import { X, GripVertical, ChevronUp, ChevronDown, Check, RefreshCw } from 'lucide-react'
+import { X, ChevronUp, ChevronDown, Check, RefreshCw } from 'lucide-react'
 import { MODEL_PROFILES, MODEL_IDS } from '@shared/modelProfiles'
 import type { DiffusionModelId, ModelInfo, LoraInfo, LoraSelection } from '@shared/types'
 import { SafeImage } from './SafeImage'
@@ -41,12 +41,6 @@ interface LoraRowProps {
   onToggleLora: (name: string) => void
   onLoraStrengthChange: (name: string, kind: 'model' | 'clip', v: number) => void
   onReorderLoras?: (from: number, to: number) => void
-  dragLoraIdx: number | null
-  dropLoraIdx: number | null
-  dropPosition: 'before' | 'after' | null
-  setDragLoraIdx: (idx: number | null) => void
-  setDropLoraIdx: (idx: number | null) => void
-  setDropPosition: (pos: 'before' | 'after' | null) => void
 }
 
 const LoraRow = memo(function LoraRow({
@@ -60,62 +54,13 @@ const LoraRow = memo(function LoraRow({
   profile,
   onToggleLora,
   onLoraStrengthChange,
-  onReorderLoras,
-  dragLoraIdx,
-  dropLoraIdx,
-  dropPosition,
-  setDragLoraIdx,
-  setDropLoraIdx,
-  setDropPosition
+  onReorderLoras
 }: LoraRowProps) {
-  const isDragging = dragLoraIdx === idx
-  const isDropTarget = dropLoraIdx === idx && dragLoraIdx !== null && dragLoraIdx !== idx
   const selLora = loras.find((l) => l.name === sel.name)
 
   return (
-    <div
-      onDragOver={canReorder ? (e) => {
-        if (dragLoraIdx === null) return
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'move'
-        if (dragLoraIdx !== idx) {
-          setDropLoraIdx(idx)
-          const rect = e.currentTarget.getBoundingClientRect()
-          setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-        }
-      } : undefined}
-      onDrop={canReorder ? (e) => {
-        e.preventDefault()
-        if (dragLoraIdx !== null && dragLoraIdx !== idx && onReorderLoras) {
-          const to = dropPosition === 'after' ? idx + 1 : idx
-          onReorderLoras(idx, to)
-        }
-        setDragLoraIdx(null)
-        setDropLoraIdx(null)
-        setDropPosition(null)
-      } : undefined}
-      className={`
-          p-2 rounded-xl border bg-surface transition-all
-          ${isDragging ? 'opacity-40' : ''}
-          ${isDropTarget && dropPosition === 'before' ? 'border-t-2 border-t-accent' : ''}
-          ${isDropTarget && dropPosition === 'after' ? 'border-b-2 border-b-accent' : ''}
-        `}
-    >
-      <div
-        draggable={canReorder}
-        onDragStart={canReorder ? (e) => {
-          setDragLoraIdx(idx)
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('text/plain', String(idx))
-        } : undefined}
-        onDragEnd={canReorder ? () => {
-          setDragLoraIdx(null)
-          setDropLoraIdx(null)
-          setDropPosition(null)
-        } : undefined}
-        className={`flex items-center justify-between mb-1.5 ${canReorder ? 'cursor-grab active:cursor-grabbing' : ''}`}
-        title={canReorder ? 'Arraste para reordenar' : undefined}
-      >
+    <div className="p-2 rounded-xl border bg-surface transition-all">
+      <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-1.5">
           <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-bold font-mono">
             {idx + 1}º
@@ -135,10 +80,26 @@ const LoraRow = memo(function LoraRow({
           ) : null}
         </div>
         {canReorder && (
-          <GripVertical
-            size={14}
-            className={`shrink-0 transition-colors ${isDragging ? 'text-accent' : 'text-text-muted'}`}
-          />
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onReorderLoras?.(idx, idx - 1)}
+              disabled={idx === 0}
+              className="p-0.5 rounded hover:bg-surface-tertiary text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Mover para cima"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onReorderLoras?.(idx, idx + 1)}
+              disabled={idx === total - 1}
+              className="p-0.5 rounded hover:bg-surface-tertiary text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Mover para baixo"
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
         )}
       </div>
       <div className="flex gap-2.5">
@@ -217,9 +178,6 @@ export function ModelSidebar({
   const [modelsOpen, setModelsOpen] = useState(false)
   const [lorasOpen, setLorasOpen] = useState(false)
   const [loraSearch, setLoraSearch] = useState('')
-  const [dragLoraIdx, setDragLoraIdx] = useState<number | null>(null)
-  const [dropLoraIdx, setDropLoraIdx] = useState<number | null>(null)
-  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
 
   const filteredModels = useFilterModels(models, diffusionModel)
   const { refreshing } = useRefreshLoras({ refreshFn: refreshLorasFn })
@@ -447,7 +405,7 @@ export function ModelSidebar({
             {onReorderLoras && (
               <p className="text-[10px] text-text-muted leading-tight">
                 Ordem no workflow: <span className="text-accent font-semibold">1º → {selectedLoras.length}º</span>
-                {' — '}arraste pela barra para reordenar (o último aplicado tem prioridade nos traços em conflito).
+                {' — '}use as setas para reordenar (o último aplicado tem prioridade nos traços em conflito).
               </p>
             )}
             {selectedLoras.map((sel, idx) => {
@@ -468,12 +426,6 @@ export function ModelSidebar({
                   onToggleLora={onToggleLora}
                   onLoraStrengthChange={onLoraStrengthChange}
                   onReorderLoras={onReorderLoras}
-                  dragLoraIdx={dragLoraIdx}
-                  dropLoraIdx={dropLoraIdx}
-                  dropPosition={dropPosition}
-                  setDragLoraIdx={setDragLoraIdx}
-                  setDropLoraIdx={setDropLoraIdx}
-                  setDropPosition={setDropPosition}
                 />
               )
             })}
